@@ -66,6 +66,8 @@ The rings read:
 
 The outer ring is the short-window remaining percentage. The inner ring is the weekly remaining percentage. The menu summary should say `Live` when direct usage succeeds and `Cached` when the local log fallback is active.
 
+Pet wakeups and moves are driven by a filesystem watcher on `~/.codex/.codex-global-state.json`, with a slow fallback timer for missed events. Keep that event-driven path intact when changing frame-following behavior.
+
 ## Editing Workflow
 
 When changing behavior or visuals:

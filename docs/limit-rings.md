@@ -26,6 +26,8 @@ The app reads live usage first, then local files as support or fallback:
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
 - `~/.codex/logs_2.sqlite`: fallback source using the newest `codex.rate_limits` event when the live usage call fails.
 
+The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed.
+
 No OpenAI API key is required. The menu summary says `Live` when the direct usage read succeeds and `Cached` when it is showing the local event-log fallback.
 
 ## Rendering Model

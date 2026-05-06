@@ -28,6 +28,8 @@ The important design choice is the companion boundary. A menu item inside Codex 
 
 `codex-pet-limit-rings` stays outside the Codex app. It reads local Codex state, asks ChatGPT for live usage data using the local Codex/ChatGPT token, and renders its own transparent always-on-top window around the pet. The result is reversible, inspectable, and easy for another Codex agent to install or modify.
 
+Pet wakeups are handled by a lightweight filesystem watcher on Codex's local global-state file, with a slow fallback timer as a safety net. That lets the rings snap back when the pet is re-enabled without constantly polling for position changes.
+
 ## Quick Start
 
 Install the rings as a login item:

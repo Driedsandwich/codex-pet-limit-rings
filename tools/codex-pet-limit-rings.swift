@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import SQLite3
 
@@ -24,7 +25,8 @@ struct LimitState {
 }
 
 private let limitStatePollInterval: TimeInterval = 20.0
-private let petFramePollInterval: TimeInterval = 0.12
+private let petFrameFallbackPollInterval: TimeInterval = 2.0
+private let petFrameStateDebounceInterval: TimeInterval = 0.035
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
 private let liveUsageURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
 
@@ -670,11 +672,13 @@ final class LimitRingsApp: NSObject {
     private var stateTimer: Timer?
     private var frameTimer: Timer?
     private var animationTimer: Timer?
-    private var hoverTimer: Timer?
     private var mouseDownMonitor: Any?
     private var mouseDragMonitor: Any?
     private var mouseUpMonitor: Any?
     private var mouseMoveMonitor: Any?
+    private var globalStateSource: DispatchSourceFileSystemObject?
+    private var pendingGlobalStateWatcherRestart: DispatchWorkItem?
+    private var pendingFrameUpdate: DispatchWorkItem?
     private var startTime = Date()
     private var currentPetFrameAppKit: CGRect?
     private var dragCenterOffset: CGPoint?
@@ -706,20 +710,30 @@ final class LimitRingsApp: NSObject {
         super.init()
     }
 
+    deinit {
+        stateTimer?.invalidate()
+        frameTimer?.invalidate()
+        animationTimer?.invalidate()
+        pendingGlobalStateWatcherRestart?.cancel()
+        pendingFrameUpdate?.cancel()
+        globalStateSource?.cancel()
+        [mouseDownMonitor, mouseDragMonitor, mouseUpMonitor, mouseMoveMonitor].compactMap { $0 }.forEach {
+            NSEvent.removeMonitor($0)
+        }
+    }
+
     func run() {
         installStatusMenu()
         updateState()
         updateFrame()
+        installGlobalStateWatcher()
         updateRingVisibility()
 
         stateTimer = Timer.scheduledTimer(withTimeInterval: limitStatePollInterval, repeats: true) { [weak self] _ in
             self?.updateState()
         }
-        frameTimer = Timer.scheduledTimer(withTimeInterval: petFramePollInterval, repeats: true) { [weak self] _ in
+        frameTimer = Timer.scheduledTimer(withTimeInterval: petFrameFallbackPollInterval, repeats: true) { [weak self] _ in
             self?.updateFrame()
-        }
-        hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
-            self?.updateTooltip(at: NSEvent.mouseLocation)
         }
         installDragFollow()
         animationTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
@@ -740,6 +754,62 @@ final class LimitRingsApp: NSObject {
                 self.stateReadInFlight = false
             }
         }
+    }
+
+    private func installGlobalStateWatcher() {
+        pendingGlobalStateWatcherRestart?.cancel()
+        pendingGlobalStateWatcherRestart = nil
+        globalStateSource?.cancel()
+        globalStateSource = nil
+
+        let descriptor = open(config.globalStatePath.path, O_EVTONLY)
+        guard descriptor >= 0 else {
+            scheduleGlobalStateWatcherRestart(after: 1.0)
+            return
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.write, .extend, .attrib, .delete, .rename],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            let events = self.globalStateSource?.data ?? []
+            self.scheduleFrameUpdateFromGlobalState()
+            if events.contains(.delete) || events.contains(.rename) {
+                self.scheduleGlobalStateWatcherRestart(after: 0.2)
+            }
+        }
+        source.setCancelHandler {
+            close(descriptor)
+        }
+        globalStateSource = source
+        source.resume()
+    }
+
+    private func scheduleGlobalStateWatcherRestart(after delay: TimeInterval) {
+        pendingGlobalStateWatcherRestart?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingGlobalStateWatcherRestart = nil
+            self.installGlobalStateWatcher()
+            self.scheduleFrameUpdateFromGlobalState()
+        }
+        pendingGlobalStateWatcherRestart = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func scheduleFrameUpdateFromGlobalState() {
+        pendingFrameUpdate?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingFrameUpdate = nil
+            self.updateFrame()
+            self.updateTooltip(at: NSEvent.mouseLocation)
+        }
+        pendingFrameUpdate = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + petFrameStateDebounceInterval, execute: work)
     }
 
     private func updateFrame() {
