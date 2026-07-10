@@ -9,9 +9,18 @@ permissions:
 
 jobs:
   verify:
-    runs-on: macos-latest
-    timeout-minutes: 15
+    name: verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-15
+          - macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Verify build, tests, privacy, and release metadata
         run: tools/verify-release.sh
+      - name: Smoke-test the published v0.5.0 artifact
+        run: tools/smoke-release-artifact.sh 0.5.0
