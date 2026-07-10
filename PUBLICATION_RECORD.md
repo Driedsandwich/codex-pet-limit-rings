@@ -1,16 +1,19 @@
 # Publication Record
 
-status: local-ready
+status: branches-published
 
 ## Source Commits
 
 - Upstream baseline: `9962bd0c4df0c2f16e7e10af0b6c23db84702878`
 - Upstream-compatible fix: `853af5b28fe598ae465e4a482f0e9e9ffbbbace0`
 - Downstream 0.5.0 implementation: `9579e08b995a6d1e27099b6e359c581deefe7140`
+- Downstream release-packaging head published initially: `46edab5fc322a065abaa67eeaebddc7475b8e731`
 
 ## Publication Targets
 
-- Downstream fork: pending
+- Downstream fork: `https://github.com/Driedsandwich/codex-pet-limit-rings`
+- Upstream-fix branch: `codex/upstream-chatgpt-owner` at `853af5b28fe598ae465e4a482f0e9e9ffbbbace0`
+- Downstream branch: `codex/downstream-0.5.0` at `46edab5fc322a065abaa67eeaebddc7475b8e731` before this record update
 - Downstream CI: pending
 - Downstream merge commit: pending
 - Upstream pull request: pending
@@ -25,7 +28,7 @@ status: local-ready
 5. Open the isolated compatibility pull request from `Driedsandwich:codex/upstream-chatgpt-owner` to `petergpt:main`.
 6. After the downstream pull request is merged and verified, create tag and release `v0.5.0` from the verified merge commit.
 
-Fork creation, each push, each pull request, merge, tag, and release remain separately auditable actions. Update this record with URLs and final commit identifiers after each action succeeds.
+Fork creation, each push, each pull request, merge, tag, and release remain separately auditable actions. Fork creation and both initial branch pushes completed on 2026-07-10. Update this record with URLs and final commit identifiers after each subsequent action succeeds.
 
 ## Local Evidence Before Publication
 
