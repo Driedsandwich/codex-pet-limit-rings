@@ -40,6 +40,8 @@ defaults delete local.codex.pet-limit-rings CodexPetLimitRings.notificationBands
 
 The v0.7.0 daily usage view is memory-only, so rollback requires no usage database, JSONL, preference, or cache cleanup.
 
+The v0.8.0 live connection and usage summaries are also memory-only. Rolling back to v0.7.0 requires restoring only the prior app, LaunchAgent, preferences, and Skill backup.
+
 ## Verify The Restore
 
 ```bash

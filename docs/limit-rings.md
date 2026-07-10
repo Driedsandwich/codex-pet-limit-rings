@@ -23,13 +23,13 @@ The rings are pet-agnostic. They work with any pet Codex displays because the ap
 
 The app reads live usage first, then local files as support or fallback:
 
-- `codex app-server --stdio`: primary rate-limit source using the stable `account/rateLimits/read` request after the required `initialize` / `initialized` handshake.
-- The same stable app-server interface provides `account/usage/read` to a separate short-lived reader. Only normalized daily date/token buckets remain in memory.
+- One long-lived `codex app-server --stdio` connection is the primary source. It performs the required `initialize` / `initialized` handshake, reads stable `account/rateLimits/read`, and applies stable sparse `account/rateLimits/updated` notifications.
+- The same connection reads stable `account/usage/read` every 15 minutes. Normalized daily buckets plus current streak, peak daily tokens, and lifetime tokens remain in memory only.
 - `~/.codex/.codex-global-state.json`: current pet bounds, using `electron-avatar-overlay-bounds.mascot`.
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
 - The newest existing `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite`: fallback source using the newest current `codex.rate_limits` event when app-server fails.
 
-The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed.
+The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed. App-server disconnects use bounded exponential reconnect delays; the 20-second local rate-limit poll runs only while disconnected.
 
 During pet drags, the live overlay window is matched to the `com.openai.codex` application bundle rather than a fixed visible process name. This supports both older builds presented as `Codex` and current builds presented as `ChatGPT` without matching unrelated ChatGPT wrappers.
 
@@ -37,7 +37,7 @@ No OpenAI API key is required. The app no longer reads ChatGPT bearer tokens fro
 
 The full `account/rateLimits/read` snapshot is decoded read-only. The app can display `rateLimitsByLimitId`, credit availability and balance, individual monthly spend control, limit-reached reason, and the available reset-credit count. It never calls `account/rateLimitResetCredit/consume` and does not mutate the account.
 
-Daily account usage is read-only in v0.7.0, refreshed every 15 minutes, and never persisted. Per-thread usage remains excluded: the app does not subscribe to `thread/tokenUsage/updated`, resume or fork threads, inspect prompts, retain thread identifiers, or parse SQLite/JSONL for usage.
+Daily account usage has remained read-only since v0.7.0, is refreshed every 15 minutes, and is never persisted. Version 0.8.0 also displays selected aggregate summary fields from the same response. Per-thread usage remains excluded: the app does not subscribe to `thread/tokenUsage/updated`, resume or fork threads, inspect prompts, retain thread identifiers, or parse SQLite/JSONL for usage.
 
 The app discovers Codex CLI installations from explicit environment overrides, the current `ChatGPT.app` bundle, older `Codex.app` bundles, Homebrew locations, and `PATH`. `--diagnose` reports compatibility state as JSON without emitting tokens or user-specific paths.
 
