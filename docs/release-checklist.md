@@ -18,6 +18,20 @@ tools/verify-release.sh
 
 The gate must pass shell syntax, plist validation, regression tests, Swift compilation, preview rendering, credential-path checks, secret-like material checks, MIT license presence, and version consistency.
 
+Build the release candidate and checksum:
+
+```bash
+tools/package-release.sh
+```
+
+Inspect the generated ZIP and `.sha256` file under ignored `dist/`. Version `0.5.0` is ad-hoc signed and not notarized; the release notes must state that limitation.
+
+The packaging command verifies its checksum before returning. To repeat that check manually, run it from `dist/` so the relative archive name resolves:
+
+```bash
+(cd dist && shasum -a 256 -c CodexPetLimitRings-v0.5.0-macos-arm64.zip.sha256)
+```
+
 ## Runtime Gate
 
 After installing a release candidate, verify:

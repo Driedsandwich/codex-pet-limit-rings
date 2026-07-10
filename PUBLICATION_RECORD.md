@@ -30,6 +30,8 @@ Fork creation, each push, each pull request, merge, tag, and release remain sepa
 ## Local Evidence Before Publication
 
 - `tools/verify-release.sh`: passed for `v0.5.0`.
+- Release candidate: `CodexPetLimitRings-v0.5.0-macos-arm64.zip`.
+- Release candidate SHA-256: `ad9c51d6efabd6f4da72013bd0419ef1c6d91bd6a792fcd68abe7512bb4a543b`.
 - Installed app diagnostics: app-server ready, current ChatGPT.app CLI detected, primary and secondary limits available.
 - Runtime: LaunchAgent active, ring window aligned to the pet, error log empty.
 - Rollback: previous `0.4.0` app and LaunchAgent backed up locally.

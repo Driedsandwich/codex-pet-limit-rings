@@ -114,6 +114,7 @@ tools/
   install-codex-skill.sh           copy the bundled skill into ~/.codex/skills
   test-limit-rings.sh              compile and run regression tests
   verify-release.sh                run the local and CI release gate
+  package-release.sh               build a checked macOS arm64 release ZIP
 
 skills/codex-pet-limit-rings/
   SKILL.md                         Codex-agent workflow for this project
@@ -159,6 +160,12 @@ Run the complete local/CI release gate:
 
 ```bash
 tools/verify-release.sh
+```
+
+Build an ad-hoc-signed macOS arm64 ZIP and SHA-256 file under ignored `dist/`:
+
+```bash
+tools/package-release.sh
 ```
 
 ## Experiments
