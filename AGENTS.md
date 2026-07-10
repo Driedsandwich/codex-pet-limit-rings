@@ -18,7 +18,9 @@ For app changes, verify:
 
 ```bash
 bash -n tools/*.sh
-swiftc tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
+swiftc -parse-as-library tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
+tools/test-limit-rings.sh
+tools/verify-release.sh
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 ```
 

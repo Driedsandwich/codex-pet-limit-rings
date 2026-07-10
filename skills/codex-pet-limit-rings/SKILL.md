@@ -60,11 +60,13 @@ launchctl print "gui/$(id -u)/com.codex-pet.limit-rings" >/dev/null
 
 The rings read:
 
-- `~/.codex/auth.json` for a local ChatGPT access token, then `https://chatgpt.com/backend-api/wham/usage` for live usage data.
+- `codex app-server --stdio` and its stable `account/rateLimits/read` method for primary usage-limit data.
 - `~/.codex/.codex-global-state.json` for `electron-avatar-overlay-open` and `electron-avatar-overlay-bounds.mascot`.
-- `~/.codex/logs_2.sqlite` for fallback to the newest `codex.rate_limits` event when live usage fails.
+- The newest existing `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite` for fallback to the newest current `codex.rate_limits` event when app-server fails.
 
-The outer ring is the short-window remaining percentage. The inner ring is the weekly remaining percentage. The menu summary should say `Live` when direct usage succeeds and `Cached` when the local log fallback is active.
+The app must not read `auth.json` or call the undocumented `backend-api/wham/usage` endpoint. The outer ring is the short-window remaining percentage. The inner ring is the weekly remaining percentage. The menu summary distinguishes `App Server`, `Cached`, and `Local` sources and must not show expired values as current.
+
+Run `CodexPetLimitRings --diagnose` for a privacy-safe JSON compatibility check. It must not print tokens, raw account identifiers, or user-specific paths.
 
 Pet wakeups and moves are driven by a filesystem watcher on `~/.codex/.codex-global-state.json`, with a slow fallback timer for missed events. Keep that event-driven path intact when changing frame-following behavior.
 
@@ -78,7 +80,9 @@ When changing behavior or visuals:
 
 ```bash
 bash -n tools/*.sh
-swiftc tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
+swiftc -parse-as-library tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
+tools/test-limit-rings.sh
+tools/verify-release.sh
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 ```
 

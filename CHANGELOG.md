@@ -7,11 +7,15 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 ### Added
 
 - Hover readouts now show a subtle reset countdown beneath the remaining percentage when reset data is available.
+- A privacy-safe `--diagnose` command reports Codex app, CLI, app-server, pet-state, and limit availability without printing tokens or user paths.
+- Regression tests cover current `ChatGPT.app` CLI discovery, app-server decoding, transient caching, cache expiry, and SQLite path selection.
 
 ### Changed
 
 - Reset countdown text uses compact proportional styling so hour/minute labels stay readable without making the capsule feel busy.
 - Rings now follow pet drags from the live Codex overlay window at drag-time, reducing visible lag when moving the pet.
+- Rate limits now come from the stable `codex app-server` protocol first; direct `auth.json` and undocumented `wham/usage` access have been removed from the normal data path.
+- The newest root or `sqlite/` Codex log database is selected for local fallback, and recent successful app-server data survives transient failures for up to 30 minutes while still current.
 
 ### Fixed
 
