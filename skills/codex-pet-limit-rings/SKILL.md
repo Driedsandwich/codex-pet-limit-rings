@@ -67,7 +67,7 @@ The rings read:
 
 The app must not read `auth.json` or call the undocumented `backend-api/wham/usage` endpoint. The outer ring is the short-window remaining percentage. The inner ring is the weekly remaining percentage. The menu summary distinguishes `App Server`, `Cached`, and `Local` sources and must not show expired values as current. Sparse notifications must preserve nullable metadata from the latest full snapshot. The details submenu may show multiple limit buckets, credits, monthly spend control, reached reasons, and reset-credit availability, but must never consume a reset credit or mutate the account.
 
-Notifications are local, off by default, and request permission only after the user enables them. Cached or SQLite fallback values must not trigger notifications. Daily usage must not be written to preferences, SQLite, JSONL, or another durable store. Do not subscribe to `thread/tokenUsage/updated`, resume or fork threads, or retain thread identifiers.
+Notifications are local, off by default, and request permission only after the user enables them. Cached or SQLite fallback values must not trigger notifications. Daily usage and aggregate milestones must not be written to preferences, SQLite, JSONL, or another durable store. Connection health may use only the existing in-memory connection flag, fallback source, and usage observation time. Do not subscribe to `thread/tokenUsage/updated`, resume or fork threads, or retain thread or turn identifiers.
 
 Honor Reduced Motion, Increase Contrast, and Differentiate Without Color. Keep English and Japanese localization resources in the app bundle.
 

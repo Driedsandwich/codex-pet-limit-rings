@@ -17,7 +17,8 @@ The rings are designed to be glanceable:
 - Color moves from calm green/blue to amber and red as capacity gets low.
 - Hovering over the pet or rings shows the exact percentages at the current ring endpoints.
 - A small menu-bar icon exposes all available limit buckets, credits, monthly spend controls, reset credits, and limit status without modifying the account.
-- A Daily Usage submenu shows the latest 14 account-usage days plus current streak, peak day, and lifetime totals, refreshing every 15 minutes without storing usage history.
+- A Daily Usage submenu shows the latest 14 account-usage days plus current and longest streaks, longest turn, peak day, and lifetime totals, refreshing every 15 minutes without storing usage history.
+- A Connection Health submenu shows live, reconnecting, or poll-fallback state plus the last in-memory usage update time using text and symbols rather than color alone.
 - Optional 25%, 10%, and recovery notifications are off by default and request macOS permission only when enabled.
 - Reduced Motion, Increase Contrast, Differentiate Without Color, English, and Japanese are supported.
 
@@ -36,6 +37,8 @@ The published v0.6.0 release adds read-only limit intelligence, opt-in notificat
 The published v0.7.0 release adds memory-only Daily Usage Insights through stable app-server `account/usage/read`. It does not collect per-thread usage, inspect transcripts, store usage history, or mutate the account.
 
 The published v0.8.0 release keeps one app-server connection open for immediate sparse rate-limit updates, reconnects with bounded backoff, and adds current-streak, peak-day, and lifetime usage summaries without expanding the privacy boundary.
+
+The v0.9.0 candidate adds two aggregate usage milestones and explicit connection-health status using only fields and state already held in memory. It adds no thread data, persistence, notification, permission, or account mutation.
 
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
 

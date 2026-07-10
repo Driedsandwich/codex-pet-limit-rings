@@ -50,6 +50,13 @@ The first downstream parent commit changes live pet-window matching from the vis
 - Display current streak, peak daily tokens, and lifetime tokens in English and Japanese without adding notification or storage permissions.
 - Continue excluding thread events and identifiers, resume/fork, reset-credit consumption, experimental APIs, and account mutation.
 
+## v0.9.0 Usage Milestones & Connection Health
+
+- Display longest streak and longest running turn from the existing stable aggregate usage summary without adding another request or storage path.
+- Label live, reconnecting, and disconnected poll-fallback states using existing in-memory connection and source state.
+- Show the last in-memory usage observation time and keep all status presentation English/Japanese and distinguishable without color.
+- Continue excluding thread/turn identifiers, per-thread token events, resume/fork, durable usage storage, reset-credit consumption, new notifications, experimental APIs, and account mutation.
+
 ## Known Compatibility Risks
 
 - The Codex app-server command is still labeled experimental even though the rate-limit methods used here are present in its stable generated schema.

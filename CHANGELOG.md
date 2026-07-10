@@ -4,7 +4,13 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
-No changes yet.
+### Usage Milestones & Connection Health
+
+- Show longest streak and longest running turn from the existing memory-only aggregate usage summary.
+- Show explicit live, reconnecting, or poll-fallback connection state plus the last in-memory usage update time.
+- Keep connection states distinguishable without color and localize the new rows in English and Japanese.
+- Continue excluding thread/turn identifiers, per-thread usage, durable usage storage, reset consumption, account mutation, experimental APIs, and new notifications.
+- Release CI now smoke-tests the published v0.8.0 artifact on macOS 15 and macOS 26.
 
 ## 0.8.0 - 2026-07-11
 
