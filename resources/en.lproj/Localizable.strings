@@ -1,6 +1,7 @@
 "menu.waiting" = "Waiting for Codex limit data";
 "menu.limitDetails" = "Limit Details";
 "menu.dailyUsage" = "Daily Usage";
+"menu.connectionHealth" = "Connection Health";
 "menu.showRings" = "Show Rings";
 "menu.notifications" = "Limit Notifications";
 "menu.refresh" = "Refresh Now";
@@ -26,8 +27,19 @@
 "usage.empty" = "No daily usage is available yet";
 "usage.row" = "%@  %@  %@ tokens";
 "usage.currentStreak" = "Current streak: %@ days";
+"usage.longestStreak" = "Longest streak: %@ days";
+"usage.longestTurn" = "Longest turn: %@";
 "usage.peakDaily" = "Peak day: %@ tokens";
 "usage.lifetime" = "Lifetime: %@ tokens";
+"duration.dayShort" = "d";
+"duration.hourShort" = "h";
+"duration.minuteShort" = "m";
+"duration.secondShort" = "s";
+"connection.live" = "● Live app-server updates";
+"connection.reconnecting" = "↻ Reconnecting to app-server";
+"connection.pollFallback" = "↙ Poll fallback while reconnecting";
+"connection.usageUpdated" = "Usage updated: %@";
+"connection.usageWaiting" = "Usage update pending";
 "reached.rate" = "rate limit reached";
 "reached.ownerCredits" = "workspace credits depleted";
 "reached.memberCredits" = "member credits depleted";

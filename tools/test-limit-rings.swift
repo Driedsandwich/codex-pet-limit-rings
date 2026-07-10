@@ -22,6 +22,7 @@ struct LimitRingsTests {
             try testReconnectBackoffIsBounded()
             try testAccountUsageDecodeAndFourteenDayNormalization()
             try testAccountUsageEmptyAndAccessibleBars()
+            try testUsageMilestonesAndConnectionHealth()
             try testNotificationTransitionsAndDedupe()
             try testNotificationsAreOffByDefault()
             try testAccessibilityPresentationIsExplicit()
@@ -118,6 +119,8 @@ struct LimitRingsTests {
         try expect(snapshot.buckets.first?.startDate == "2026-06-03", "expected chronological fourteen-day window")
         try expect(snapshot.buckets.last?.tokens == 1600, "expected the newest bucket value")
         try expect(snapshot.summary?.currentStreakDays == 4, "expected current streak summary")
+        try expect(snapshot.summary?.longestStreakDays == 8, "expected longest streak summary")
+        try expect(snapshot.summary?.longestRunningTurnSec == 90, "expected longest running turn summary")
         try expect(snapshot.summary?.peakDailyTokens == 1600, "expected peak daily summary")
         try expect(snapshot.summary?.lifetimeTokens == 123456, "expected lifetime token summary")
 
@@ -139,6 +142,20 @@ struct LimitRingsTests {
         try expect(dailyUsageBar(tokens: 0, maximum: 100) == "··········", "expected zero usage to have a textual empty bar")
         try expect(dailyUsageBar(tokens: 1, maximum: 100).hasPrefix("▮"), "expected positive usage to remain distinguishable without color")
         try expect(dailyUsageBar(tokens: 100, maximum: 100) == "▮▮▮▮▮▮▮▮▮▮", "expected maximum usage to fill the textual bar")
+    }
+
+    private static func testUsageMilestonesAndConnectionHealth() throws {
+        let labels = UsageDurationUnitLabels(day: "d", hour: "h", minute: "m", second: "s")
+        try expect(formattedUsageDuration(seconds: -1, labels: labels) == nil, "expected invalid negative duration to be omitted")
+        try expect(formattedUsageDuration(seconds: 0, labels: labels) == "0s", "expected zero-second duration")
+        try expect(formattedUsageDuration(seconds: 90, labels: labels) == "1m 30s", "expected minute-second duration")
+        try expect(formattedUsageDuration(seconds: 3_661, labels: labels) == "1h 1m", "expected hour-minute duration")
+        try expect(formattedUsageDuration(seconds: 90_061, labels: labels) == "1d 1h", "expected day-hour duration")
+
+        try expect(connectionHealthState(isConnected: true, limitSource: "app-server") == .live, "expected connected app-server state")
+        try expect(connectionHealthState(isConnected: false, limitSource: "none") == .reconnecting, "expected disconnected state without fallback data")
+        try expect(connectionHealthState(isConnected: false, limitSource: "cached") == .pollFallback, "expected cached poll fallback state")
+        try expect(connectionHealthState(isConnected: false, limitSource: "local") == .pollFallback, "expected local poll fallback state")
     }
 
     private static func testNotificationTransitionsAndDedupe() throws {

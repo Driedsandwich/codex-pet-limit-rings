@@ -154,7 +154,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "0.8.0"
+    var version = "0.9.0"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -238,6 +238,45 @@ func dailyUsageBar(tokens: Int64, maximum: Int64, width: Int = 10) -> String {
         filled = max(1, min(width, Int((Double(tokens) / Double(maximum) * Double(width)).rounded())))
     }
     return String(repeating: "▮", count: filled) + String(repeating: "·", count: width - filled)
+}
+
+struct UsageDurationUnitLabels {
+    var day: String
+    var hour: String
+    var minute: String
+    var second: String
+}
+
+func formattedUsageDuration(seconds: Int64, labels: UsageDurationUnitLabels) -> String? {
+    guard seconds >= 0 else { return nil }
+    let days = seconds / 86_400
+    let hours = (seconds % 86_400) / 3_600
+    let minutes = (seconds % 3_600) / 60
+    let remainingSeconds = seconds % 60
+
+    let components: [(Int64, String)]
+    if days > 0 {
+        components = [(days, labels.day), (hours, labels.hour)]
+    } else if hours > 0 {
+        components = [(hours, labels.hour), (minutes, labels.minute)]
+    } else if minutes > 0 {
+        components = [(minutes, labels.minute), (remainingSeconds, labels.second)]
+    } else {
+        components = [(remainingSeconds, labels.second)]
+    }
+    return components.map { "\($0.0)\($0.1)" }.joined(separator: " ")
+}
+
+enum ConnectionHealthState: Equatable {
+    case live
+    case reconnecting
+    case pollFallback
+}
+
+func connectionHealthState(isConnected: Bool, limitSource: String) -> ConnectionHealthState {
+    if isConnected { return .live }
+    if limitSource == "cached" || limitSource == "local" { return .pollFallback }
+    return .reconnecting
 }
 
 struct AppServerRateLimitResult: Decodable {
@@ -1787,6 +1826,7 @@ final class LimitRingsApp: NSObject {
     private var summaryItem: NSMenuItem?
     private var limitDetailsMenu: NSMenu?
     private var dailyUsageMenu: NSMenu?
+    private var connectionHealthMenu: NSMenu?
     private var showRingsItem: NSMenuItem?
     private var notificationsItem: NSMenuItem?
     private var stateTimer: Timer?
@@ -1815,6 +1855,7 @@ final class LimitRingsApp: NSObject {
     private var stateReadInFlight = false
     private var usageReadInFlight = false
     private var appServerConnected = false
+    private var currentLimitSource = "none"
     private var dailyUsageSnapshot: DailyUsageSnapshot?
     private var dailyUsageErrorCode: String?
 
@@ -1916,6 +1957,7 @@ final class LimitRingsApp: NSObject {
                     }
                     self.updateState()
                 }
+                self.updateConnectionHealthMenu()
             }
         }
         liveClient.onRateLimitState = { [weak self] state in
@@ -1934,15 +1976,18 @@ final class LimitRingsApp: NSObject {
                 }
                 self.usageReadInFlight = false
                 self.updateDailyUsageMenu()
+                self.updateConnectionHealthMenu()
             }
         }
     }
 
     private func applyLimitState(_ state: LimitState) {
+        currentLimitSource = state.source
         ringView.state = state
         updateSummaryMenuItem()
         updateLimitDetailsMenu()
         processNotifications(for: state)
+        updateConnectionHealthMenu()
     }
 
     private func requestDailyUsage() {
@@ -2106,6 +2151,16 @@ final class LimitRingsApp: NSObject {
         menu.addItem(usageItem)
         dailyUsageMenu = usageMenu
 
+        let connectionItem = NSMenuItem(
+            title: localized("menu.connectionHealth", fallback: "Connection Health"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        let connectionMenu = NSMenu(title: localized("menu.connectionHealth", fallback: "Connection Health"))
+        connectionItem.submenu = connectionMenu
+        menu.addItem(connectionItem)
+        connectionHealthMenu = connectionMenu
+
         menu.addItem(.separator())
 
         let showItem = NSMenuItem(
@@ -2148,6 +2203,7 @@ final class LimitRingsApp: NSObject {
         updateSummaryMenuItem()
         updateLimitDetailsMenu()
         updateDailyUsageMenu()
+        updateConnectionHealthMenu()
         updateShowRingsMenuItem()
         updateNotificationsMenuItem()
     }
@@ -2272,6 +2328,27 @@ final class LimitRingsApp: NSObject {
                     localizedInteger(streak)
                 ))
             }
+            if let longestStreak = snapshot.summary?.longestStreakDays {
+                usageRows.append(String(
+                    format: localized("usage.longestStreak", fallback: "Longest streak: %@ days"),
+                    localizedInteger(longestStreak)
+                ))
+            }
+            if let seconds = snapshot.summary?.longestRunningTurnSec,
+               let duration = formattedUsageDuration(
+                   seconds: seconds,
+                   labels: UsageDurationUnitLabels(
+                       day: localized("duration.dayShort", fallback: "d"),
+                       hour: localized("duration.hourShort", fallback: "h"),
+                       minute: localized("duration.minuteShort", fallback: "m"),
+                       second: localized("duration.secondShort", fallback: "s")
+                   )
+               ) {
+                usageRows.append(String(
+                    format: localized("usage.longestTurn", fallback: "Longest turn: %@"),
+                    duration
+                ))
+            }
             if let peak = snapshot.summary?.peakDailyTokens {
                 usageRows.append(String(
                     format: localized("usage.peakDaily", fallback: "Peak day: %@ tokens"),
@@ -2304,6 +2381,43 @@ final class LimitRingsApp: NSObject {
             let item = NSMenuItem(title: row, action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
+        }
+    }
+
+    private func updateConnectionHealthMenu() {
+        guard let menu = connectionHealthMenu else { return }
+        menu.removeAllItems()
+
+        let statusTitle: String
+        switch connectionHealthState(isConnected: appServerConnected, limitSource: currentLimitSource) {
+        case .live:
+            statusTitle = localized("connection.live", fallback: "● Live app-server updates")
+        case .reconnecting:
+            statusTitle = localized("connection.reconnecting", fallback: "↻ Reconnecting to app-server")
+        case .pollFallback:
+            statusTitle = localized("connection.pollFallback", fallback: "↙ Poll fallback while reconnecting")
+        }
+        let statusItem = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
+        statusItem.isEnabled = false
+        menu.addItem(statusItem)
+
+        if let observedAt = dailyUsageSnapshot?.observedAt {
+            let time = DateFormatter.localizedString(from: observedAt, dateStyle: .none, timeStyle: .short)
+            let updatedItem = NSMenuItem(
+                title: String(format: localized("connection.usageUpdated", fallback: "Usage updated: %@"), time),
+                action: nil,
+                keyEquivalent: ""
+            )
+            updatedItem.isEnabled = false
+            menu.addItem(updatedItem)
+        } else {
+            let waitingItem = NSMenuItem(
+                title: localized("connection.usageWaiting", fallback: "Usage update pending"),
+                action: nil,
+                keyEquivalent: ""
+            )
+            waitingItem.isEnabled = false
+            menu.addItem(waitingItem)
         }
     }
 
@@ -2950,6 +3064,8 @@ private struct CompatibilityDiagnostics: Encodable {
     var dailyUsageAvailable: Bool
     var dailyUsageBucketCount: Int
     var usageSummaryAvailable: Bool
+    var longestStreakAvailable: Bool
+    var longestTurnAvailable: Bool
     var notificationsEnabled: Bool
     var reduceMotion: Bool
     var increaseContrast: Bool
@@ -2992,6 +3108,8 @@ func runDiagnostics(config: LimitRingsConfig) -> Bool {
         dailyUsageAvailable: usageProbe.snapshot != nil,
         dailyUsageBucketCount: usageProbe.snapshot?.buckets.count ?? 0,
         usageSummaryAvailable: usageProbe.snapshot?.summary != nil,
+        longestStreakAvailable: usageProbe.snapshot?.summary?.longestStreakDays != nil,
+        longestTurnAvailable: usageProbe.snapshot?.summary?.longestRunningTurnSec != nil,
         notificationsEnabled: UserDefaults.standard.bool(forKey: notificationsEnabledDefaultsKey),
         reduceMotion: accessibility.reduceMotion,
         increaseContrast: accessibility.increaseContrast,
