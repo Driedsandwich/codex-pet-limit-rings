@@ -20,6 +20,8 @@ mkdir -p "$STAGE" "$DIST"
 
 file "$BIN" | grep -q 'arm64'
 codesign --verify --deep --strict "$APP"
+test -f "$APP/Contents/Resources/en.lproj/Localizable.strings"
+test -f "$APP/Contents/Resources/ja.lproj/Localizable.strings"
 minimum_os="$(vtool -show-build "$BIN" | awk '$1 == "minos" { print $2; exit }')"
 if [[ "$minimum_os" != "$DEPLOYMENT_TARGET" ]]; then
   echo "release packaging failed: expected minimum macOS $DEPLOYMENT_TARGET, found ${minimum_os:-unreadable}" >&2

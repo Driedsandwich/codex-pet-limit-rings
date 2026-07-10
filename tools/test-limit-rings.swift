@@ -17,6 +17,9 @@ struct LimitRingsTests {
         do {
             try testCodexCLIPathsCoverCurrentChatGPTAppAndPath()
             try testAppServerRateLimitDecode()
+            try testNotificationTransitionsAndDedupe()
+            try testNotificationsAreOffByDefault()
+            try testAccessibilityPresentationIsExplicit()
             try testRecentAppServerSnapshotSurvivesTransientFailure()
             try testExpiredAppServerSnapshotIsDiscarded()
             try testNewestLogsDatabaseWins()
@@ -42,14 +45,50 @@ struct LimitRingsTests {
     }
 
     private static func testAppServerRateLimitDecode() throws {
-        let line = #"{"id":2,"result":{"rateLimits":{"limitId":"codex","limitName":"Codex","planType":"pro","primary":{"usedPercent":12,"windowDurationMins":300,"resetsAt":4102444800},"secondary":{"usedPercent":34,"windowDurationMins":10080,"resetsAt":4102444800}},"rateLimitsByLimitId":{"codex":{"limitId":"codex","limitName":"Codex","planType":"pro","primary":{"usedPercent":12,"windowDurationMins":300,"resetsAt":4102444800},"secondary":{"usedPercent":34,"windowDurationMins":10080,"resetsAt":4102444800}},"review":{"limitId":"review","limitName":"Code Review","primary":{"usedPercent":25,"windowDurationMins":10080,"resetsAt":4102444800}}}}}"#
+        let line = #"{"id":2,"result":{"rateLimits":{"limitId":"codex","limitName":"Codex","planType":"pro","primary":{"usedPercent":12,"windowDurationMins":300,"resetsAt":4102444800},"secondary":{"usedPercent":34,"windowDurationMins":10080,"resetsAt":4102444800},"credits":{"hasCredits":true,"unlimited":false,"balance":"12.50"},"individualLimit":{"limit":"100","used":"25","remainingPercent":75,"resetsAt":4102444800}},"rateLimitsByLimitId":{"codex":{"limitId":"codex","limitName":"Codex","planType":"pro","primary":{"usedPercent":12,"windowDurationMins":300,"resetsAt":4102444800},"secondary":{"usedPercent":34,"windowDurationMins":10080,"resetsAt":4102444800},"credits":{"hasCredits":true,"unlimited":false,"balance":"12.50"},"individualLimit":{"limit":"100","used":"25","remainingPercent":75,"resetsAt":4102444800}},"review":{"limitId":"review","limitName":"Code Review","primary":{"usedPercent":25,"windowDurationMins":10080,"resetsAt":4102444800},"rateLimitReachedType":"workspace_member_usage_limit_reached"}},"rateLimitResetCredits":{"availableCount":2,"credits":null}}}"#
         guard let state = AppServerLimitStateReader.decodeRateLimitState(from: line) else {
             throw LimitRingsTestError.failed("expected app-server response to decode")
         }
         try expect(state.primary?.remainingPercent == 88, "expected primary remaining percent")
         try expect(state.secondary?.remainingPercent == 66, "expected secondary remaining percent")
         try expect(state.additional.first?.name == "Code Review", "expected additional limit bucket")
+        try expect(state.additional.first?.primary?.remainingPercent == 75, "expected additional limit percentage")
+        try expect(state.additional.first?.reachedType == "workspace_member_usage_limit_reached", "expected reached reason")
+        try expect(state.credits?.balance == "12.50", "expected credit balance")
+        try expect(state.individualLimit?.remainingPercent == 75, "expected monthly spend-control limit")
+        try expect(state.resetCreditsAvailable == 2, "expected reset-credit count")
         try expect(state.source == "app-server", "expected app-server source label")
+    }
+
+    private static func testNotificationTransitionsAndDedupe() throws {
+        let seeded = limitNotificationTransition(previousBand: nil, remainingPercent: 20, limitName: "Short", isFresh: true)
+        try expect(seeded.band == .low, "expected initial low band to seed")
+        try expect(seeded.event == nil, "expected no notification on initial seed")
+
+        let low = limitNotificationTransition(previousBand: .healthy, remainingPercent: 25, limitName: "Short", isFresh: true)
+        try expect(low.event?.kind == .low, "expected 25 percent low notification")
+        let duplicate = limitNotificationTransition(previousBand: .low, remainingPercent: 20, limitName: "Short", isFresh: true)
+        try expect(duplicate.event == nil, "expected duplicate low notification to be suppressed")
+        let critical = limitNotificationTransition(previousBand: .low, remainingPercent: 10, limitName: "Short", isFresh: true)
+        try expect(critical.event?.kind == .critical, "expected 10 percent critical notification")
+        let recovered = limitNotificationTransition(previousBand: .critical, remainingPercent: 40, limitName: "Short", isFresh: true)
+        try expect(recovered.event?.kind == .recovered, "expected recovery notification")
+        let cached = limitNotificationTransition(previousBand: .healthy, remainingPercent: 10, limitName: "Short", isFresh: false)
+        try expect(cached.event == nil, "expected cached data not to notify")
+        try expect(cached.band == .healthy, "expected cached data not to change the notification band")
+    }
+
+    private static func testNotificationsAreOffByDefault() throws {
+        try expect(!notificationsEnabledFromStoredValue(nil), "expected notifications to default off")
+        try expect(notificationsEnabledFromStoredValue(true), "expected explicit notification opt-in")
+        try expect(!notificationsEnabledFromStoredValue(false), "expected explicit notification opt-out")
+    }
+
+    private static func testAccessibilityPresentationIsExplicit() throws {
+        let presentation = AccessibilityPresentation(reduceMotion: true, increaseContrast: true, differentiateWithoutColor: true)
+        try expect(presentation.reduceMotion, "expected reduced motion")
+        try expect(presentation.increaseContrast, "expected increased contrast")
+        try expect(presentation.differentiateWithoutColor, "expected non-color differentiation")
     }
 
     private static func testRecentAppServerSnapshotSurvivesTransientFailure() throws {

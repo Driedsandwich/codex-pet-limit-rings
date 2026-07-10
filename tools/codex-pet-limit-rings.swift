@@ -3,6 +3,7 @@ import CoreGraphics
 import Darwin
 import Foundation
 import SQLite3
+import UserNotifications
 
 struct LimitBucket {
     var usedPercent: Double
@@ -14,11 +15,42 @@ struct LimitBucket {
     }
 }
 
+struct LimitCredits {
+    var hasCredits: Bool
+    var unlimited: Bool
+    var balance: String?
+}
+
+struct SpendControlLimit {
+    var limit: String
+    var used: String
+    var remainingPercent: Double
+    var resetsAt: TimeInterval
+}
+
+struct AdditionalLimit {
+    var id: String
+    var name: String
+    var primary: LimitBucket?
+    var secondary: LimitBucket?
+    var credits: LimitCredits?
+    var individualLimit: SpendControlLimit?
+    var reachedType: String?
+
+    var representativeBucket: LimitBucket? {
+        primary ?? secondary
+    }
+}
+
 struct LimitState {
     var planType: String?
     var primary: LimitBucket?
     var secondary: LimitBucket?
-    var additional: [(name: String, bucket: LimitBucket)]
+    var additional: [AdditionalLimit]
+    var credits: LimitCredits? = nil
+    var individualLimit: SpendControlLimit? = nil
+    var reachedType: String? = nil
+    var resetCreditsAvailable: Int64? = nil
     var observedAt: Date
     var source: String
 
@@ -31,8 +63,66 @@ private let petFrameStateDebounceInterval: TimeInterval = 0.035
 private let dragFollowInterval: TimeInterval = 1.0 / 60.0
 private let dragLiveMismatchTolerance: CGFloat = 96.0
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
+private let notificationsEnabledDefaultsKey = "CodexPetLimitRings.notificationsEnabled"
+private let notificationBandsDefaultsKey = "CodexPetLimitRings.notificationBands"
 private let appServerLimitStateTimeout: TimeInterval = 5.0
 private let limitStateFallbackMaxAge: TimeInterval = 30 * 60
+
+private func localized(_ key: String, fallback: String) -> String {
+    NSLocalizedString(key, tableName: nil, bundle: .main, value: fallback, comment: "")
+}
+
+func notificationsEnabledFromStoredValue(_ value: Any?) -> Bool {
+    (value as? Bool) ?? false
+}
+
+enum LimitNotificationBand: Int, Equatable {
+    case healthy = 0
+    case low = 1
+    case critical = 2
+
+    static func from(remainingPercent: Double) -> LimitNotificationBand {
+        if remainingPercent <= 10 { return .critical }
+        if remainingPercent <= 25 { return .low }
+        return .healthy
+    }
+}
+
+enum LimitNotificationKind: Equatable {
+    case low
+    case critical
+    case recovered
+}
+
+struct LimitNotificationEvent {
+    var kind: LimitNotificationKind
+    var limitName: String
+    var remainingPercent: Double
+}
+
+func limitNotificationTransition(
+    previousBand: LimitNotificationBand?,
+    remainingPercent: Double,
+    limitName: String,
+    isFresh: Bool
+) -> (band: LimitNotificationBand, event: LimitNotificationEvent?) {
+    let currentBand = LimitNotificationBand.from(remainingPercent: remainingPercent)
+    guard isFresh else {
+        return (previousBand ?? currentBand, nil)
+    }
+    guard let previousBand, previousBand != currentBand else {
+        return (currentBand, nil)
+    }
+
+    let kind: LimitNotificationKind?
+    switch (previousBand, currentBand) {
+    case (_, .critical): kind = .critical
+    case (.healthy, .low): kind = .low
+    case (.low, .healthy), (.critical, .healthy): kind = .recovered
+    default: kind = nil
+    }
+    return (currentBand, kind.map { LimitNotificationEvent(kind: $0, limitName: limitName, remainingPercent: remainingPercent) })
+}
 
 private struct EventPayload: Decodable {
     var type: String
@@ -61,7 +151,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "0.5.1"
+    var version = "0.6.0"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -85,6 +175,7 @@ private struct AppServerRateLimitReadResponse: Decodable {
 struct AppServerRateLimitResult: Decodable {
     var rateLimits: AppServerRateLimitSnapshot
     var rateLimitsByLimitId: [String: AppServerRateLimitSnapshot]?
+    var rateLimitResetCredits: AppServerRateLimitResetCreditsSummary?
 
     func toLimitState(observedAt: Date) -> LimitState? {
         let selected = rateLimitsByLimitId?["codex"] ?? rateLimits
@@ -96,21 +187,28 @@ struct AppServerRateLimitResult: Decodable {
 
         let selectedID = selected.limitId ?? "codex"
         let additional = (rateLimitsByLimitId ?? [:])
-            .compactMap { limitID, snapshot -> (String, LimitBucket)? in
+            .compactMap { limitID, snapshot -> AdditionalLimit? in
                 guard limitID != selectedID,
-                      limitID != "codex",
-                      let bucket = (snapshot.primary ?? snapshot.secondary)?.toBucket() else {
+                      limitID != "codex" else {
                     return nil
                 }
-                return (snapshot.limitName ?? limitID, bucket)
+                let detail = snapshot.toAdditionalLimit(defaultID: limitID)
+                guard detail.representativeBucket != nil || detail.credits != nil || detail.individualLimit != nil || detail.reachedType != nil else {
+                    return nil
+                }
+                return detail
             }
-            .sorted { $0.0.localizedCaseInsensitiveCompare($1.0) == .orderedAscending }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
         return LimitState(
             planType: selected.planType,
             primary: primary,
             secondary: secondary,
             additional: additional,
+            credits: selected.credits?.toLimitCredits(),
+            individualLimit: selected.individualLimit?.toSpendControlLimit(),
+            reachedType: selected.rateLimitReachedType,
+            resetCreditsAvailable: rateLimitResetCredits?.availableCount,
             observedAt: observedAt,
             source: "app-server"
         )
@@ -122,7 +220,47 @@ struct AppServerRateLimitSnapshot: Decodable {
     var limitName: String?
     var primary: AppServerRateLimitWindow?
     var secondary: AppServerRateLimitWindow?
+    var credits: AppServerCreditsSnapshot?
+    var individualLimit: AppServerSpendControlLimitSnapshot?
     var planType: String?
+    var rateLimitReachedType: String?
+
+    func toAdditionalLimit(defaultID: String) -> AdditionalLimit {
+        AdditionalLimit(
+            id: limitId ?? defaultID,
+            name: limitName ?? limitId ?? defaultID,
+            primary: primary?.toBucket(),
+            secondary: secondary?.toBucket(),
+            credits: credits?.toLimitCredits(),
+            individualLimit: individualLimit?.toSpendControlLimit(),
+            reachedType: rateLimitReachedType
+        )
+    }
+}
+
+struct AppServerCreditsSnapshot: Decodable {
+    var hasCredits: Bool
+    var unlimited: Bool
+    var balance: String?
+
+    func toLimitCredits() -> LimitCredits {
+        LimitCredits(hasCredits: hasCredits, unlimited: unlimited, balance: balance)
+    }
+}
+
+struct AppServerSpendControlLimitSnapshot: Decodable {
+    var limit: String
+    var used: String
+    var remainingPercent: Double
+    var resetsAt: Double
+
+    func toSpendControlLimit() -> SpendControlLimit {
+        SpendControlLimit(limit: limit, used: used, remainingPercent: remainingPercent, resetsAt: resetsAt)
+    }
+}
+
+struct AppServerRateLimitResetCreditsSummary: Decodable {
+    var availableCount: Int64
 }
 
 struct AppServerRateLimitWindow: Decodable {
@@ -423,13 +561,15 @@ final class LimitStateReader {
         let primary = (payload.rate_limits?.primary ?? payload.rate_limits?.primary_window)?.toBucket()
         let secondary = (payload.rate_limits?.secondary ?? payload.rate_limits?.secondary_window)?.toBucket()
         let additional = (payload.additional_rate_limits ?? [:])
-            .compactMap { name, payload -> (String, LimitBucket)? in
-                guard let bucket = (payload.primary ?? payload.primary_window ?? payload.secondary ?? payload.secondary_window)?.toBucket() else {
+            .compactMap { name, payload -> AdditionalLimit? in
+                let primary = (payload.primary ?? payload.primary_window)?.toBucket()
+                let secondary = (payload.secondary ?? payload.secondary_window)?.toBucket()
+                guard primary != nil || secondary != nil else {
                     return nil
                 }
-                return (name, bucket)
+                return AdditionalLimit(id: name, name: name, primary: primary, secondary: secondary, credits: nil, individualLimit: nil, reachedType: nil)
             }
-            .sorted { $0.0.localizedCaseInsensitiveCompare($1.0) == .orderedAscending }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
         let state = LimitState(
             planType: payload.plan_type,
@@ -620,10 +760,28 @@ final class PetFrameReader {
     }
 }
 
+struct AccessibilityPresentation {
+    var reduceMotion: Bool
+    var increaseContrast: Bool
+    var differentiateWithoutColor: Bool
+
+    static let standard = AccessibilityPresentation(reduceMotion: false, increaseContrast: false, differentiateWithoutColor: false)
+
+    static var current: AccessibilityPresentation {
+        let workspace = NSWorkspace.shared
+        return AccessibilityPresentation(
+            reduceMotion: workspace.accessibilityDisplayShouldReduceMotion,
+            increaseContrast: workspace.accessibilityDisplayShouldIncreaseContrast,
+            differentiateWithoutColor: workspace.accessibilityDisplayShouldDifferentiateWithoutColor
+        )
+    }
+}
+
 struct LimitRingRenderer {
     var state: LimitState
     var phase: Double
     var showsReadout: Bool = false
+    var accessibility: AccessibilityPresentation = .standard
 
     func draw(in rect: CGRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
@@ -634,8 +792,9 @@ struct LimitRingRenderer {
         let center = CGPoint(x: rect.midX, y: rect.midY)
         let minSide = min(rect.width, rect.height)
         let urgency = max(urgency(for: state.primary), urgency(for: state.secondary))
-        let breathe = CGFloat((sin(phase * 2.0 * .pi) + 1.0) * 0.5)
-        let pulse = CGFloat(1.0 + urgency * 0.025 * breathe)
+        let animatedPhase = accessibility.reduceMotion ? 0.0 : phase
+        let breathe = accessibility.reduceMotion ? CGFloat(0.0) : CGFloat((sin(animatedPhase * 2.0 * .pi) + 1.0) * 0.5)
+        let pulse = accessibility.reduceMotion ? CGFloat(1.0) : CGFloat(1.0 + urgency * 0.025 * breathe)
         let outerRadius = (minSide * 0.5 - 16.0) * pulse
         let innerRadius = outerRadius - 13.0
 
@@ -650,8 +809,9 @@ struct LimitRingRenderer {
                 lineWidth: 7.0,
                 bucket: primary,
                 color: color(forRemaining: primary.remainingPercent, role: .primary),
-                trackAlpha: 0.20,
-                phase: phase
+                trackAlpha: accessibility.increaseContrast ? 0.34 : 0.20,
+                phase: animatedPhase,
+                dashPattern: nil
             )
         } else {
             drawMissingRing(context, center: center, radius: outerRadius, lineWidth: 7.0)
@@ -665,8 +825,9 @@ struct LimitRingRenderer {
                 lineWidth: 4.5,
                 bucket: secondary,
                 color: color(forRemaining: secondary.remainingPercent, role: .secondary),
-                trackAlpha: 0.14,
-                phase: phase + 0.18
+                trackAlpha: accessibility.increaseContrast ? 0.28 : 0.14,
+                phase: animatedPhase + 0.18,
+                dashPattern: accessibility.differentiateWithoutColor ? [5.0, 3.0] : nil
             )
         }
 
@@ -738,7 +899,8 @@ struct LimitRingRenderer {
         bucket: LimitBucket,
         color: NSColor,
         trackAlpha: CGFloat,
-        phase: Double
+        phase: Double,
+        dashPattern: [CGFloat]?
     ) {
         let start = -CGFloat.pi / 2.0
         let remaining = CGFloat(bucket.remainingPercent / 100.0)
@@ -764,13 +926,18 @@ struct LimitRingRenderer {
         context.setShadow(offset: .zero, blur: 4.0, color: color.withAlphaComponent(0.52).cgColor)
         context.setStrokeColor(color.cgColor)
         context.setLineWidth(lineWidth)
+        if let dashPattern {
+            context.setLineDash(phase: 0, lengths: dashPattern)
+        }
         context.addArc(center: center, radius: radius, startAngle: start, endAngle: end, clockwise: false)
         context.strokePath()
 
-        let glintAngle = start + CGFloat(phase.truncatingRemainder(dividingBy: 1.0)) * CGFloat.pi * 2.0
-        let glint = point(center: center, radius: radius, angle: glintAngle)
-        context.setFillColor(NSColor(calibratedWhite: 1.0, alpha: 0.38).cgColor)
-        context.fillEllipse(in: CGRect(x: glint.x - 1.8, y: glint.y - 1.8, width: 3.6, height: 3.6))
+        if !accessibility.reduceMotion {
+            let glintAngle = start + CGFloat(phase.truncatingRemainder(dividingBy: 1.0)) * CGFloat.pi * 2.0
+            let glint = point(center: center, radius: radius, angle: glintAngle)
+            context.setFillColor(NSColor(calibratedWhite: 1.0, alpha: 0.38).cgColor)
+            context.fillEllipse(in: CGRect(x: glint.x - 1.8, y: glint.y - 1.8, width: 3.6, height: 3.6))
+        }
         context.restoreGState()
     }
 
@@ -914,7 +1081,7 @@ struct LimitRingRenderer {
 
         let path = CGPath(roundedRect: readout.labelRect, cornerWidth: 8.0, cornerHeight: 8.0, transform: nil)
         context.setShadow(offset: .zero, blur: 8.0, color: readout.color.withAlphaComponent(0.22).cgColor)
-        context.setFillColor(NSColor(calibratedWhite: 0.055, alpha: 0.78).cgColor)
+        context.setFillColor(NSColor(calibratedWhite: 0.055, alpha: accessibility.increaseContrast ? 0.96 : 0.78).cgColor)
         context.addPath(path)
         context.fillPath()
         context.setShadow(offset: .zero, blur: 0.0, color: nil)
@@ -945,12 +1112,18 @@ struct LimitRingRenderer {
         guard dots.count > 0 else { return }
         context.saveGState()
         for (index, item) in dots.enumerated() {
+            guard let bucket = item.representativeBucket else { continue }
             let angle = -CGFloat.pi / 2.0 + CGFloat(index) / CGFloat(max(dots.count, 1)) * CGFloat.pi * 2.0
             let dot = point(center: center, radius: radius, angle: angle)
-            let color = color(forRemaining: item.bucket.remainingPercent, role: .primary)
+            let color = color(forRemaining: bucket.remainingPercent, role: .primary)
             context.setShadow(offset: .zero, blur: 5.0, color: color.withAlphaComponent(0.35).cgColor)
             context.setFillColor(color.withAlphaComponent(0.82).cgColor)
-            context.fillEllipse(in: CGRect(x: dot.x - 2.4, y: dot.y - 2.4, width: 4.8, height: 4.8))
+            let marker = CGRect(x: dot.x - 2.4, y: dot.y - 2.4, width: 4.8, height: 4.8)
+            if accessibility.differentiateWithoutColor, index.isMultiple(of: 2) {
+                context.fill(marker)
+            } else {
+                context.fillEllipse(in: marker)
+            }
         }
         context.restoreGState()
     }
@@ -1048,7 +1221,12 @@ final class LimitRingView: NSView {
     override var isOpaque: Bool { false }
 
     override func draw(_ dirtyRect: NSRect) {
-        LimitRingRenderer(state: state, phase: phase, showsReadout: showsReadout).draw(in: bounds)
+        LimitRingRenderer(
+            state: state,
+            phase: phase,
+            showsReadout: showsReadout,
+            accessibility: .current
+        ).draw(in: bounds)
     }
 }
 
@@ -1061,7 +1239,9 @@ final class LimitRingsApp: NSObject {
     private let stateQueue = DispatchQueue(label: "codex-pet-limit-rings.state-reader")
     private var statusItem: NSStatusItem?
     private var summaryItem: NSMenuItem?
+    private var limitDetailsMenu: NSMenu?
     private var showRingsItem: NSMenuItem?
+    private var notificationsItem: NSMenuItem?
     private var stateTimer: Timer?
     private var frameTimer: Timer?
     private var animationTimer: Timer?
@@ -1082,6 +1262,8 @@ final class LimitRingsApp: NSObject {
     private var dragMouseToOverlayOriginOffsetAppKit: CGPoint?
     private var holdDraggedFrameUntil: Date?
     private var ringsVisible: Bool
+    private var notificationsEnabled: Bool
+    private var notificationBands: [String: Int]
     private var stateReadInFlight = false
 
     init(config: LimitRingsConfig) {
@@ -1093,6 +1275,10 @@ final class LimitRingsApp: NSObject {
         self.frameReader = PetFrameReader(globalStatePath: config.globalStatePath)
         self.ringView = LimitRingView(frame: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)))
         self.ringsVisible = UserDefaults.standard.object(forKey: ringsVisibleDefaultsKey) as? Bool ?? true
+        self.notificationsEnabled = notificationsEnabledFromStoredValue(
+            UserDefaults.standard.object(forKey: notificationsEnabledDefaultsKey)
+        )
+        self.notificationBands = UserDefaults.standard.dictionary(forKey: notificationBandsDefaultsKey) as? [String: Int] ?? [:]
         self.panel = NSPanel(
             contentRect: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -1153,6 +1339,8 @@ final class LimitRingsApp: NSObject {
             DispatchQueue.main.async {
                 self.ringView.state = state
                 self.updateSummaryMenuItem()
+                self.updateLimitDetailsMenu()
+                self.processNotifications(for: state)
                 self.stateReadInFlight = false
             }
         }
@@ -1284,31 +1472,68 @@ final class LimitRingsApp: NSObject {
         }
 
         let menu = NSMenu()
-        let summary = NSMenuItem(title: "Waiting for Codex limit data", action: nil, keyEquivalent: "")
+        let summary = NSMenuItem(
+            title: localized("menu.waiting", fallback: "Waiting for Codex limit data"),
+            action: nil,
+            keyEquivalent: ""
+        )
         summary.isEnabled = false
         menu.addItem(summary)
         summaryItem = summary
 
+        let detailsItem = NSMenuItem(
+            title: localized("menu.limitDetails", fallback: "Limit Details"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        let detailsMenu = NSMenu(title: localized("menu.limitDetails", fallback: "Limit Details"))
+        detailsItem.submenu = detailsMenu
+        menu.addItem(detailsItem)
+        limitDetailsMenu = detailsMenu
+
         menu.addItem(.separator())
 
-        let showItem = NSMenuItem(title: "Show Rings", action: #selector(toggleRings(_:)), keyEquivalent: "")
+        let showItem = NSMenuItem(
+            title: localized("menu.showRings", fallback: "Show Rings"),
+            action: #selector(toggleRings(_:)),
+            keyEquivalent: ""
+        )
         showItem.target = self
         menu.addItem(showItem)
         showRingsItem = showItem
 
-        let refreshItem = NSMenuItem(title: "Refresh Now", action: #selector(refreshNow(_:)), keyEquivalent: "r")
+        let notifyItem = NSMenuItem(
+            title: localized("menu.notifications", fallback: "Limit Notifications"),
+            action: #selector(toggleNotifications(_:)),
+            keyEquivalent: ""
+        )
+        notifyItem.target = self
+        menu.addItem(notifyItem)
+        notificationsItem = notifyItem
+
+        let refreshItem = NSMenuItem(
+            title: localized("menu.refresh", fallback: "Refresh Now"),
+            action: #selector(refreshNow(_:)),
+            keyEquivalent: "r"
+        )
         refreshItem.target = self
         menu.addItem(refreshItem)
 
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "Quit Codex Pet Limit Rings", action: #selector(quit(_:)), keyEquivalent: "q")
+        let quitItem = NSMenuItem(
+            title: localized("menu.quit", fallback: "Quit Codex Pet Limit Rings"),
+            action: #selector(quit(_:)),
+            keyEquivalent: "q"
+        )
         quitItem.target = self
         menu.addItem(quitItem)
 
         item.menu = menu
         updateSummaryMenuItem()
+        updateLimitDetailsMenu()
         updateShowRingsMenuItem()
+        updateNotificationsMenuItem()
     }
 
     private func makeStatusBarIcon() -> NSImage {
@@ -1348,25 +1573,111 @@ final class LimitRingsApp: NSObject {
 
     private func updateSummaryMenuItem() {
         guard let summaryItem else { return }
-        let primary = ringView.state.primary.map { "Short \(formatPercent($0.remainingPercent))" }
-        let secondary = ringView.state.secondary.map { "Weekly \(formatPercent($0.remainingPercent))" }
+        let primary = ringView.state.primary.map {
+            String(format: localized("summary.short", fallback: "Short %@"), formatPercent($0.remainingPercent))
+        }
+        let secondary = ringView.state.secondary.map {
+            String(format: localized("summary.weekly", fallback: "Weekly %@"), formatPercent($0.remainingPercent))
+        }
         let pieces = [primary, secondary].compactMap { $0 }
         if pieces.isEmpty {
-            summaryItem.title = "No current Codex limit data"
+            summaryItem.title = localized("summary.noData", fallback: "No current Codex limit data")
         } else {
             let source: String
             switch ringView.state.source {
-            case "app-server": source = "App Server"
-            case "cached": source = "Cached"
-            case "local": source = "Local"
-            default: source = "Unknown"
+            case "app-server": source = localized("source.appServer", fallback: "App Server")
+            case "cached": source = localized("source.cached", fallback: "Cached")
+            case "local": source = localized("source.local", fallback: "Local")
+            default: source = localized("source.unknown", fallback: "Unknown")
             }
             summaryItem.title = "\(source) " + pieces.joined(separator: " | ")
         }
     }
 
+    private func updateLimitDetailsMenu() {
+        guard let menu = limitDetailsMenu else { return }
+        menu.removeAllItems()
+        let state = ringView.state
+        var rows: [String] = []
+
+        if let primary = state.primary {
+            rows.append(String(format: localized("details.short", fallback: "Short window: %@"), formatPercent(primary.remainingPercent)))
+        }
+        if let secondary = state.secondary {
+            rows.append(String(format: localized("details.weekly", fallback: "Weekly window: %@"), formatPercent(secondary.remainingPercent)))
+        }
+        for limit in state.additional {
+            if let primary = limit.primary {
+                rows.append("\(limit.name): \(formatPercent(primary.remainingPercent))")
+            }
+            if let secondary = limit.secondary {
+                rows.append(String(format: localized("details.secondary", fallback: "%@: secondary %@"), limit.name, formatPercent(secondary.remainingPercent)))
+            }
+        }
+
+        appendAccountRows(credits: state.credits, individualLimit: state.individualLimit, reachedType: state.reachedType, to: &rows)
+        for limit in state.additional {
+            appendAccountRows(credits: limit.credits, individualLimit: limit.individualLimit, reachedType: limit.reachedType, prefix: limit.name, to: &rows)
+        }
+        if let count = state.resetCreditsAvailable {
+            rows.append(String(format: localized("details.resetCredits", fallback: "Reset credits available: %@"), String(count)))
+        }
+
+        if rows.isEmpty {
+            rows.append(localized("details.none", fallback: "No current limit details"))
+        }
+        for row in rows {
+            let item = NSMenuItem(title: row, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+    }
+
+    private func appendAccountRows(
+        credits: LimitCredits?,
+        individualLimit: SpendControlLimit?,
+        reachedType: String?,
+        prefix: String? = nil,
+        to rows: inout [String]
+    ) {
+        let labelPrefix = prefix.map { "\($0): " } ?? ""
+        if let credits {
+            if credits.unlimited {
+                rows.append(labelPrefix + localized("details.creditsUnlimited", fallback: "Credits: unlimited"))
+            } else if let balance = credits.balance, credits.hasCredits {
+                rows.append(labelPrefix + String(format: localized("details.creditsBalance", fallback: "Credits balance: %@"), balance))
+            }
+        }
+        if let individualLimit {
+            rows.append(labelPrefix + String(
+                format: localized("details.monthly", fallback: "Monthly limit: %@ remaining (%@ / %@ used)"),
+                formatPercent(individualLimit.remainingPercent),
+                individualLimit.used,
+                individualLimit.limit
+            ))
+        }
+        if let reachedType {
+            rows.append(labelPrefix + String(format: localized("details.reached", fallback: "Limit status: %@"), localizedReachedType(reachedType)))
+        }
+    }
+
+    private func localizedReachedType(_ type: String) -> String {
+        switch type {
+        case "rate_limit_reached": return localized("reached.rate", fallback: "rate limit reached")
+        case "workspace_owner_credits_depleted": return localized("reached.ownerCredits", fallback: "workspace credits depleted")
+        case "workspace_member_credits_depleted": return localized("reached.memberCredits", fallback: "member credits depleted")
+        case "workspace_owner_usage_limit_reached": return localized("reached.ownerUsage", fallback: "workspace usage limit reached")
+        case "workspace_member_usage_limit_reached": return localized("reached.memberUsage", fallback: "member usage limit reached")
+        default: return type.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+
     private func updateShowRingsMenuItem() {
         showRingsItem?.state = ringsVisible ? .on : .off
+    }
+
+    private func updateNotificationsMenuItem() {
+        notificationsItem?.state = notificationsEnabled ? .on : .off
     }
 
     private func updateRingVisibility() {
@@ -1388,6 +1699,97 @@ final class LimitRingsApp: NSObject {
 
     @objc private func toggleRings(_ sender: NSMenuItem) {
         setRingsVisible(!ringsVisible)
+    }
+
+    @objc private func toggleNotifications(_ sender: NSMenuItem) {
+        if notificationsEnabled {
+            notificationsEnabled = false
+            notificationBands.removeAll()
+            UserDefaults.standard.set(false, forKey: notificationsEnabledDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: notificationBandsDefaultsKey)
+            updateNotificationsMenuItem()
+            return
+        }
+
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.notificationsEnabled = granted
+                self.notificationBands.removeAll()
+                UserDefaults.standard.set(granted, forKey: notificationsEnabledDefaultsKey)
+                UserDefaults.standard.removeObject(forKey: notificationBandsDefaultsKey)
+                self.updateNotificationsMenuItem()
+                if granted {
+                    self.processNotifications(for: self.ringView.state)
+                }
+            }
+        }
+    }
+
+    private func processNotifications(for state: LimitState) {
+        guard notificationsEnabled else { return }
+        let isFresh = state.source == "app-server"
+        guard isFresh else { return }
+        var measurements: [(id: String, name: String, remaining: Double)] = []
+        if let primary = state.primary {
+            measurements.append(("codex.primary", localized("limit.short", fallback: "Short window"), primary.remainingPercent))
+        }
+        if let secondary = state.secondary {
+            measurements.append(("codex.secondary", localized("limit.weekly", fallback: "Weekly window"), secondary.remainingPercent))
+        }
+        for limit in state.additional {
+            if let primary = limit.primary {
+                measurements.append(("\(limit.id).primary", limit.name, primary.remainingPercent))
+            }
+            if let secondary = limit.secondary {
+                measurements.append(("\(limit.id).secondary", "\(limit.name) · \(localized("limit.secondary", fallback: "secondary"))", secondary.remainingPercent))
+            }
+        }
+
+        for measurement in measurements {
+            let previous = notificationBands[measurement.id].flatMap(LimitNotificationBand.init(rawValue:))
+            let transition = limitNotificationTransition(
+                previousBand: previous,
+                remainingPercent: measurement.remaining,
+                limitName: measurement.name,
+                isFresh: isFresh
+            )
+            notificationBands[measurement.id] = transition.band.rawValue
+            if let event = transition.event {
+                sendNotification(event, identifier: measurement.id)
+            }
+        }
+        UserDefaults.standard.set(notificationBands, forKey: notificationBandsDefaultsKey)
+    }
+
+    private func sendNotification(_ event: LimitNotificationEvent, identifier: String) {
+        let content = UNMutableNotificationContent()
+        switch event.kind {
+        case .low:
+            content.title = localized("notification.low.title", fallback: "Codex limit is getting low")
+            content.body = String(
+                format: localized("notification.low.body", fallback: "%@ has %@ remaining."),
+                event.limitName,
+                formatPercent(event.remainingPercent)
+            )
+        case .critical:
+            content.title = localized("notification.critical.title", fallback: "Codex limit is critical")
+            content.body = String(
+                format: localized("notification.critical.body", fallback: "%@ has only %@ remaining."),
+                event.limitName,
+                formatPercent(event.remainingPercent)
+            )
+        case .recovered:
+            content.title = localized("notification.recovered.title", fallback: "Codex limit recovered")
+            content.body = String(
+                format: localized("notification.recovered.body", fallback: "%@ is back to %@ remaining."),
+                event.limitName,
+                formatPercent(event.remainingPercent)
+            )
+        }
+        content.sound = .default
+        let requestID = "codex-pet-limit-rings.\(identifier).\(event.kind).\(Int(Date().timeIntervalSince1970))"
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: requestID, content: content, trigger: nil))
     }
 
     @objc private func refreshNow(_ sender: NSMenuItem) {
@@ -1715,7 +2117,12 @@ func renderPreview(config: LimitRingsConfig) -> Bool {
     image.lockFocus()
     NSColor.clear.setFill()
     NSRect(origin: .zero, size: size).fill()
-    LimitRingRenderer(state: state, phase: 0.18, showsReadout: true).draw(in: CGRect(origin: .zero, size: size))
+    LimitRingRenderer(
+        state: state,
+        phase: 0.18,
+        showsReadout: true,
+        accessibility: .current
+    ).draw(in: CGRect(origin: .zero, size: size))
     image.unlockFocus()
 
     guard let previewPath = config.previewPath,
@@ -1837,6 +2244,14 @@ private struct CompatibilityDiagnostics: Encodable {
     var petFrameReadable: Bool
     var primaryLimitAvailable: Bool
     var secondaryLimitAvailable: Bool
+    var additionalLimitCount: Int
+    var creditsAvailable: Bool
+    var individualLimitAvailable: Bool
+    var resetCreditsAvailable: Int64?
+    var notificationsEnabled: Bool
+    var reduceMotion: Bool
+    var increaseContrast: Bool
+    var differentiateWithoutColor: Bool
 }
 
 func runDiagnostics(config: LimitRingsConfig) -> Bool {
@@ -1854,6 +2269,7 @@ func runDiagnostics(config: LimitRingsConfig) -> Bool {
         avatarOpen = nil
     }
 
+    let accessibility = AccessibilityPresentation.current
     let diagnostics = CompatibilityDiagnostics(
         appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development",
         codexAppRunning: runningCodex != nil,
@@ -1865,7 +2281,15 @@ func runDiagnostics(config: LimitRingsConfig) -> Bool {
         avatarOverlayOpen: avatarOpen,
         petFrameReadable: PetFrameReader(globalStatePath: config.globalStatePath).readPetFrameTopLeft() != nil,
         primaryLimitAvailable: probe.state?.primary != nil,
-        secondaryLimitAvailable: probe.state?.secondary != nil
+        secondaryLimitAvailable: probe.state?.secondary != nil,
+        additionalLimitCount: probe.state?.additional.count ?? 0,
+        creditsAvailable: probe.state?.credits?.hasCredits ?? false,
+        individualLimitAvailable: probe.state?.individualLimit != nil,
+        resetCreditsAvailable: probe.state?.resetCreditsAvailable,
+        notificationsEnabled: UserDefaults.standard.bool(forKey: notificationsEnabledDefaultsKey),
+        reduceMotion: accessibility.reduceMotion,
+        increaseContrast: accessibility.increaseContrast,
+        differentiateWithoutColor: accessibility.differentiateWithoutColor
     )
 
     let encoder = JSONEncoder()
