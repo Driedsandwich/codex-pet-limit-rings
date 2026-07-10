@@ -2,7 +2,7 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
-## Unreleased
+## 0.7.0 - 2026-07-11
 
 ### Daily Usage Insights
 
@@ -11,6 +11,10 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 - Keep the view accessible through motion-free updates, system contrast, and bars that remain distinguishable without color.
 - Continue excluding thread usage, thread identifiers, transcript parsing, durable usage storage, notifications, experimental APIs, and account mutation.
 - Release CI now smoke-tests the published v0.6.0 artifact on macOS 15 and macOS 26.
+
+## Unreleased
+
+No changes yet.
 
 ## 0.6.0 - 2026-07-11
 
