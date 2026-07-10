@@ -2,17 +2,11 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
-## 0.7.0 - 2026-07-11
-
-### Daily Usage Insights
-
-- Add a read-only Daily Usage submenu using stable app-server `account/usage/read`, refreshed every 15 minutes and retained only in memory.
-- Show the latest 14 daily buckets as localized textual bar rows, including explicit loading, empty, and unsupported states.
-- Keep the view accessible through motion-free updates, system contrast, and bars that remain distinguishable without color.
-- Continue excluding thread usage, thread identifiers, transcript parsing, durable usage storage, notifications, experimental APIs, and account mutation.
-- Release CI now smoke-tests the published v0.6.0 artifact on macOS 15 and macOS 26.
-
 ## Unreleased
+
+No changes yet.
+
+## 0.8.0 - 2026-07-11
 
 ### Live Limit Updates & Usage Summary
 
@@ -22,6 +16,16 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 - Show current streak, peak daily tokens, and lifetime tokens from the read-only account-usage summary.
 - Continue excluding thread identifiers, thread resume/fork, durable usage storage, reset consumption, and experimental API methods.
 - Release CI now smoke-tests the published v0.7.0 artifact on macOS 15 and macOS 26.
+
+## 0.7.0 - 2026-07-11
+
+### Daily Usage Insights
+
+- Add a read-only Daily Usage submenu using stable app-server `account/usage/read`, refreshed every 15 minutes and retained only in memory.
+- Show the latest 14 daily buckets as localized textual bar rows, including explicit loading, empty, and unsupported states.
+- Keep the view accessible through motion-free updates, system contrast, and bars that remain distinguishable without color.
+- Continue excluding thread usage, thread identifiers, transcript parsing, durable usage storage, notifications, experimental APIs, and account mutation.
+- Release CI now smoke-tests the published v0.6.0 artifact on macOS 15 and macOS 26.
 
 ## 0.6.0 - 2026-07-11
 

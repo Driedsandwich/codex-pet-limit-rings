@@ -35,7 +35,7 @@ The published v0.6.0 release adds read-only limit intelligence, opt-in notificat
 
 The published v0.7.0 release adds memory-only Daily Usage Insights through stable app-server `account/usage/read`. It does not collect per-thread usage, inspect transcripts, store usage history, or mutate the account.
 
-The unreleased v0.8.0 candidate keeps one app-server connection open for immediate sparse rate-limit updates, reconnects with bounded backoff, and adds current-streak, peak-day, and lifetime usage summaries without expanding the privacy boundary.
+The published v0.8.0 release keeps one app-server connection open for immediate sparse rate-limit updates, reconnects with bounded backoff, and adds current-streak, peak-day, and lifetime usage summaries without expanding the privacy boundary.
 
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
 
@@ -51,15 +51,15 @@ Pet wakeups are handled by a lightweight filesystem watcher on Codex's local glo
 
 ## Quick Start
 
-### Install The Published v0.7.0 App
+### Install The Published v0.8.0 App
 
-The published v0.7.0 app supports macOS 15 and later on Apple silicon. The verified source and package gates pass on macOS 15 and macOS 26.
+The published v0.8.0 app supports macOS 15 and later on Apple silicon. The verified source and package gates pass on macOS 15 and macOS 26.
 
-Download the app and checksum from the [v0.7.0 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.7.0), then verify the ZIP before opening it. The expected ZIP SHA-256 is `70d56a43ea95b6dbc4b594d0d0695c2f6eb874e145aabd0496341bc60fd606cf`.
+Download the app and checksum from the [v0.8.0 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.8.0), then verify the ZIP before opening it. The expected ZIP SHA-256 is `5020ba77564f0792414b3bd1c59e452d0431eb92cf3ef6ede0f70a417c473358`.
 
 ```bash
-version=0.7.0
-expected_sha=70d56a43ea95b6dbc4b594d0d0695c2f6eb874e145aabd0496341bc60fd606cf
+version=0.8.0
+expected_sha=5020ba77564f0792414b3bd1c59e452d0431eb92cf3ef6ede0f70a417c473358
 release_dir="$HOME/Downloads/CodexPetLimitRings-v$version"
 base_url="https://github.com/Driedsandwich/codex-pet-limit-rings/releases/download/v$version"
 
@@ -76,7 +76,7 @@ codesign --verify --deep --strict CodexPetLimitRings.app
 Back up an existing installation, stop its LaunchAgent, and replace it with the verified app:
 
 ```bash
-version=0.7.0
+version=0.8.0
 release_dir="${release_dir:-$HOME/Downloads/CodexPetLimitRings-v$version}"
 backup="$HOME/Library/Application Support/CodexPetLimitRings/Backups/$(date +%Y%m%d-%H%M%S)"
 app="$HOME/Applications/CodexPetLimitRings.app"
