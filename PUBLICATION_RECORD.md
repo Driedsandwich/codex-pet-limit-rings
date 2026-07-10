@@ -1,6 +1,6 @@
 # Publication Record
 
-status: branches-published-ci-passed
+status: pull-requests-open-ci-passed
 
 ## Source Commits
 
@@ -14,9 +14,10 @@ status: branches-published-ci-passed
 - Downstream fork: `https://github.com/Driedsandwich/codex-pet-limit-rings`
 - Upstream-fix branch: `codex/upstream-chatgpt-owner` at `853af5b28fe598ae465e4a482f0e9e9ffbbbace0`
 - Downstream verified code head: `codex/downstream-0.5.0` at `604263c16a499268c60eb9c03df94507131af5f9`
-- Downstream CI: passed (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29095906141`)
+- Downstream pull request: `https://github.com/Driedsandwich/codex-pet-limit-rings/pull/1` (draft, mergeable)
+- Downstream pull-request CI: passed (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29096488017`)
 - Downstream merge commit: pending
-- Upstream pull request: pending
+- Upstream pull request: `https://github.com/petergpt/codex-pet-limit-rings/pull/3` (draft, mergeable, no upstream checks configured)
 - Downstream tag and release: pending
 
 ## Lane Order
@@ -28,7 +29,7 @@ status: branches-published-ci-passed
 5. Open the isolated compatibility pull request from `Driedsandwich:codex/upstream-chatgpt-owner` to `petergpt:main`.
 6. After the downstream pull request is merged and verified, create tag and release `v0.5.0` from the verified merge commit.
 
-Fork creation, each push, each pull request, merge, tag, and release remain separately auditable actions. Fork creation and both initial branch pushes completed on 2026-07-10. Update this record with URLs and final commit identifiers after each subsequent action succeeds.
+Fork creation, both initial branch pushes, and both draft pull requests completed on 2026-07-10. Merge, tag, and release remain separate auditable actions. Update this record with URLs and final commit identifiers after each subsequent action succeeds.
 
 ## Local Evidence Before Publication
 
@@ -41,7 +42,8 @@ Fork creation, each push, each pull request, merge, tag, and release remain sepa
 
 ## Known Unknowns
 
-- GitHub-hosted macOS CI passed for verified code head `604263c16a499268c60eb9c03df94507131af5f9`; the workflow reports non-failing platform migration warnings for `actions/checkout@v4` and `macos-latest`.
+- GitHub-hosted macOS CI passed for downstream pull request #1; the workflow reports non-failing platform migration warnings for `actions/checkout@v4` and `macos-latest`.
 - Upstream maintainer response and merge timing are unknown.
+- The upstream repository does not currently report checks for pull request #3.
 - Code signing and notarization are not part of `v0.5.0`.
 - Pet global-state keys remain an undocumented desktop implementation detail.
