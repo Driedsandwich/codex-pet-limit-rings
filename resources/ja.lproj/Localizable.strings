@@ -1,5 +1,6 @@
 "menu.waiting" = "Codexの利用上限データを待っています";
 "menu.limitDetails" = "利用上限の詳細";
+"menu.dailyUsage" = "日別使用量";
 "menu.showRings" = "リングを表示";
 "menu.notifications" = "利用上限の通知";
 "menu.refresh" = "今すぐ更新";
@@ -20,6 +21,10 @@
 "details.creditsBalance" = "クレジット残高: %@";
 "details.monthly" = "月間上限: 残り%@（%@ / %@ 使用）";
 "details.reached" = "上限状態: %@";
+"usage.loading" = "日別使用量を読み込んでいます…";
+"usage.unavailable" = "このCodexバージョンまたはアカウントでは日別使用量を取得できません";
+"usage.empty" = "表示できる日別使用量はまだありません";
+"usage.row" = "%@  %@  %@トークン";
 "reached.rate" = "利用上限に到達";
 "reached.ownerCredits" = "ワークスペースのクレジットを消費済み";
 "reached.memberCredits" = "メンバーのクレジットを消費済み";

@@ -58,6 +58,8 @@ struct LimitState {
 }
 
 private let limitStatePollInterval: TimeInterval = 20.0
+private let dailyUsageRefreshInterval: TimeInterval = 15 * 60
+private let dailyUsageDisplayCount = 14
 private let petFrameFallbackPollInterval: TimeInterval = 2.0
 private let petFrameStateDebounceInterval: TimeInterval = 0.035
 private let dragFollowInterval: TimeInterval = 1.0 / 60.0
@@ -151,7 +153,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "0.6.0"
+    var version = "0.7.0"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -163,6 +165,11 @@ private struct AppServerRateLimitReadRequest: Encodable {
     var method = "account/rateLimits/read"
 }
 
+private struct AppServerAccountUsageReadRequest: Encodable {
+    var id = 2
+    var method = "account/usage/read"
+}
+
 private struct AppServerResponseID: Decodable {
     var id: Int?
 }
@@ -170,6 +177,51 @@ private struct AppServerResponseID: Decodable {
 private struct AppServerRateLimitReadResponse: Decodable {
     var id: Int?
     var result: AppServerRateLimitResult?
+}
+
+struct DailyUsageBucket: Decodable, Equatable {
+    var startDate: String
+    var tokens: Int64
+}
+
+private struct AppServerAccountUsageResult: Decodable {
+    var dailyUsageBuckets: [DailyUsageBucket]?
+}
+
+private struct AppServerAccountUsageReadResponse: Decodable {
+    var id: Int?
+    var result: AppServerAccountUsageResult?
+}
+
+struct DailyUsageSnapshot {
+    var buckets: [DailyUsageBucket]
+    var observedAt: Date
+}
+
+func normalizedDailyUsageBuckets(_ buckets: [DailyUsageBucket], limit: Int = dailyUsageDisplayCount) -> [DailyUsageBucket] {
+    guard limit > 0 else { return [] }
+    let formatter = DateFormatter()
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.dateFormat = "yyyy-MM-dd"
+
+    var byDate: [String: DailyUsageBucket] = [:]
+    for bucket in buckets where bucket.tokens >= 0 && formatter.date(from: bucket.startDate) != nil {
+        byDate[bucket.startDate] = bucket
+    }
+    return Array(byDate.values.sorted { $0.startDate < $1.startDate }.suffix(limit))
+}
+
+func dailyUsageBar(tokens: Int64, maximum: Int64, width: Int = 10) -> String {
+    guard width > 0 else { return "" }
+    let filled: Int
+    if tokens <= 0 || maximum <= 0 {
+        filled = 0
+    } else {
+        filled = max(1, min(width, Int((Double(tokens) / Double(maximum) * Double(width)).rounded())))
+    }
+    return String(repeating: "▮", count: filled) + String(repeating: "·", count: width - filled)
 }
 
 struct AppServerRateLimitResult: Decodable {
@@ -419,6 +471,157 @@ final class AppServerLimitStateReader {
             return nil
         }
         return response.result?.toLimitState(observedAt: Date())
+    }
+
+    private func findCodexCLI() -> URL? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let environment = ProcessInfo.processInfo.environment
+        var seen = Set<String>()
+        return defaultCodexCLIPaths(home: home, environment: environment)
+            .filter { seen.insert($0).inserted }
+            .map { URL(fileURLWithPath: $0) }
+            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
+
+    private static func write<T: Encodable>(_ payload: T, to handle: FileHandle, encoder: JSONEncoder) throws {
+        var data = try encoder.encode(payload)
+        data.append(0x0a)
+        handle.write(data)
+    }
+
+    private static func drainLines(from buffer: inout String) -> [String] {
+        var lines: [String] = []
+        while let newline = buffer.firstIndex(of: "\n") {
+            lines.append(String(buffer[..<newline]))
+            buffer.removeSubrange(buffer.startIndex...newline)
+        }
+        return lines
+    }
+
+    private static func responseID(in line: String, decoder: JSONDecoder) -> Int? {
+        guard let data = line.data(using: .utf8),
+              let response = try? decoder.decode(AppServerResponseID.self, from: data) else {
+            return nil
+        }
+        return response.id
+    }
+}
+
+final class AppServerAccountUsageReader {
+    private let codexHome: URL
+
+    init(codexHome: URL) {
+        self.codexHome = codexHome
+    }
+
+    func readLatest() -> (snapshot: DailyUsageSnapshot?, cliPath: URL?, errorCode: String?) {
+        guard let codexCLI = findCodexCLI() else {
+            return (nil, nil, "cli_not_found")
+        }
+
+        let process = Process()
+        process.executableURL = codexCLI
+        process.arguments = ["app-server", "--stdio"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["CODEX_HOME"] = codexHome.path
+        process.environment = environment
+
+        let stdin = Pipe()
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        let lock = NSLock()
+        let semaphore = DispatchSemaphore(value: 0)
+        var buffer = ""
+        var resolved = false
+        var initialized = false
+        var snapshot: DailyUsageSnapshot?
+        var errorCode: String?
+
+        func resolve(_ candidate: DailyUsageSnapshot?, error: String?) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !resolved else { return }
+            snapshot = candidate
+            errorCode = error
+            resolved = true
+            semaphore.signal()
+        }
+
+        stdout.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else { return }
+
+            lock.lock()
+            buffer += chunk
+            let lines = Self.drainLines(from: &buffer)
+            lock.unlock()
+
+            for line in lines {
+                guard let responseID = Self.responseID(in: line, decoder: decoder) else { continue }
+                if responseID == 1, !initialized {
+                    initialized = true
+                    do {
+                        try Self.write(AppServerInitializedNotification(), to: stdin.fileHandleForWriting, encoder: encoder)
+                        try Self.write(AppServerAccountUsageReadRequest(), to: stdin.fileHandleForWriting, encoder: encoder)
+                    } catch {
+                        resolve(nil, error: "request_write_failed")
+                    }
+                } else if responseID == 2 {
+                    guard let decoded = Self.decodeAccountUsage(from: line, decoder: decoder) else {
+                        resolve(nil, error: "invalid_account_usage_response")
+                        continue
+                    }
+                    resolve(decoded, error: nil)
+                }
+            }
+        }
+        stderr.fileHandleForReading.readabilityHandler = { handle in
+            _ = handle.availableData
+        }
+        process.terminationHandler = { _ in
+            resolve(nil, error: initialized ? "app_server_terminated" : "initialize_failed")
+        }
+
+        do {
+            try process.run()
+            try Self.write(AppServerInitializeRequest(), to: stdin.fileHandleForWriting, encoder: encoder)
+        } catch {
+            return (nil, codexCLI, "launch_failed")
+        }
+
+        if semaphore.wait(timeout: .now() + appServerLimitStateTimeout) == .timedOut {
+            resolve(nil, error: initialized ? "account_usage_timeout" : "initialize_timeout")
+        }
+        stdout.fileHandleForReading.readabilityHandler = nil
+        stderr.fileHandleForReading.readabilityHandler = nil
+        stdin.fileHandleForWriting.closeFile()
+        if process.isRunning {
+            process.terminate()
+            process.waitUntilExit()
+        }
+
+        lock.lock()
+        defer { lock.unlock() }
+        return (snapshot, codexCLI, errorCode)
+    }
+
+    static func decodeAccountUsage(from line: String, decoder: JSONDecoder = JSONDecoder()) -> DailyUsageSnapshot? {
+        guard let data = line.data(using: .utf8),
+              let response = try? decoder.decode(AppServerAccountUsageReadResponse.self, from: data),
+              response.id == 2,
+              let result = response.result else {
+            return nil
+        }
+        return DailyUsageSnapshot(
+            buckets: normalizedDailyUsageBuckets(result.dailyUsageBuckets ?? []),
+            observedAt: Date()
+        )
     }
 
     private func findCodexCLI() -> URL? {
@@ -1233,6 +1436,7 @@ final class LimitRingView: NSView {
 final class LimitRingsApp: NSObject {
     private let config: LimitRingsConfig
     private let stateReader: LimitStateReader
+    private let usageReader: AppServerAccountUsageReader
     private let frameReader: PetFrameReader
     private let panel: NSPanel
     private let ringView: LimitRingView
@@ -1240,9 +1444,11 @@ final class LimitRingsApp: NSObject {
     private var statusItem: NSStatusItem?
     private var summaryItem: NSMenuItem?
     private var limitDetailsMenu: NSMenu?
+    private var dailyUsageMenu: NSMenu?
     private var showRingsItem: NSMenuItem?
     private var notificationsItem: NSMenuItem?
     private var stateTimer: Timer?
+    private var usageTimer: Timer?
     private var frameTimer: Timer?
     private var animationTimer: Timer?
     private var dragFollowTimer: Timer?
@@ -1265,6 +1471,9 @@ final class LimitRingsApp: NSObject {
     private var notificationsEnabled: Bool
     private var notificationBands: [String: Int]
     private var stateReadInFlight = false
+    private var usageReadInFlight = false
+    private var dailyUsageSnapshot: DailyUsageSnapshot?
+    private var dailyUsageErrorCode: String?
 
     init(config: LimitRingsConfig) {
         self.config = config
@@ -1272,6 +1481,7 @@ final class LimitRingsApp: NSObject {
             logsPath: config.logsPath,
             codexHome: config.codexHome
         )
+        self.usageReader = AppServerAccountUsageReader(codexHome: config.codexHome)
         self.frameReader = PetFrameReader(globalStatePath: config.globalStatePath)
         self.ringView = LimitRingView(frame: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)))
         self.ringsVisible = UserDefaults.standard.object(forKey: ringsVisibleDefaultsKey) as? Bool ?? true
@@ -1299,6 +1509,7 @@ final class LimitRingsApp: NSObject {
 
     deinit {
         stateTimer?.invalidate()
+        usageTimer?.invalidate()
         frameTimer?.invalidate()
         animationTimer?.invalidate()
         dragFollowTimer?.invalidate()
@@ -1313,12 +1524,16 @@ final class LimitRingsApp: NSObject {
     func run() {
         installStatusMenu()
         updateState()
+        updateDailyUsage()
         updateFrame()
         installGlobalStateWatcher()
         updateRingVisibility()
 
         stateTimer = Timer.scheduledTimer(withTimeInterval: limitStatePollInterval, repeats: true) { [weak self] _ in
             self?.updateState()
+        }
+        usageTimer = Timer.scheduledTimer(withTimeInterval: dailyUsageRefreshInterval, repeats: true) { [weak self] _ in
+            self?.updateDailyUsage()
         }
         frameTimer = Timer.scheduledTimer(withTimeInterval: petFrameFallbackPollInterval, repeats: true) { [weak self] _ in
             self?.updateFrame()
@@ -1342,6 +1557,22 @@ final class LimitRingsApp: NSObject {
                 self.updateLimitDetailsMenu()
                 self.processNotifications(for: state)
                 self.stateReadInFlight = false
+            }
+        }
+    }
+
+    private func updateDailyUsage() {
+        guard !usageReadInFlight else { return }
+        usageReadInFlight = true
+        updateDailyUsageMenu()
+        stateQueue.async { [weak self] in
+            guard let self else { return }
+            let result = self.usageReader.readLatest()
+            DispatchQueue.main.async {
+                self.dailyUsageSnapshot = result.snapshot
+                self.dailyUsageErrorCode = result.errorCode
+                self.usageReadInFlight = false
+                self.updateDailyUsageMenu()
             }
         }
     }
@@ -1491,6 +1722,16 @@ final class LimitRingsApp: NSObject {
         menu.addItem(detailsItem)
         limitDetailsMenu = detailsMenu
 
+        let usageItem = NSMenuItem(
+            title: localized("menu.dailyUsage", fallback: "Daily Usage"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        let usageMenu = NSMenu(title: localized("menu.dailyUsage", fallback: "Daily Usage"))
+        usageItem.submenu = usageMenu
+        menu.addItem(usageItem)
+        dailyUsageMenu = usageMenu
+
         menu.addItem(.separator())
 
         let showItem = NSMenuItem(
@@ -1532,6 +1773,7 @@ final class LimitRingsApp: NSObject {
         item.menu = menu
         updateSummaryMenuItem()
         updateLimitDetailsMenu()
+        updateDailyUsageMenu()
         updateShowRingsMenuItem()
         updateNotificationsMenuItem()
     }
@@ -1631,6 +1873,58 @@ final class LimitRingsApp: NSObject {
             item.isEnabled = false
             menu.addItem(item)
         }
+    }
+
+    private func updateDailyUsageMenu() {
+        guard let menu = dailyUsageMenu else { return }
+        menu.removeAllItems()
+
+        let rows: [String]
+        if usageReadInFlight, dailyUsageSnapshot == nil {
+            rows = [localized("usage.loading", fallback: "Loading daily usage…")]
+        } else if dailyUsageErrorCode != nil {
+            rows = [localized("usage.unavailable", fallback: "Daily usage is unavailable in this Codex version or account")]
+        } else if let buckets = dailyUsageSnapshot?.buckets, buckets.isEmpty {
+            rows = [localized("usage.empty", fallback: "No daily usage is available yet")]
+        } else if let buckets = dailyUsageSnapshot?.buckets {
+            let maximum = buckets.map(\.tokens).max() ?? 0
+            rows = buckets.reversed().map { bucket in
+                String(
+                    format: localized("usage.row", fallback: "%@  %@  %@ tokens"),
+                    localizedDailyUsageDate(bucket.startDate),
+                    dailyUsageBar(tokens: bucket.tokens, maximum: maximum),
+                    localizedInteger(bucket.tokens)
+                )
+            }
+        } else {
+            rows = [localized("usage.loading", fallback: "Loading daily usage…")]
+        }
+
+        for row in rows {
+            let item = NSMenuItem(title: row, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+    }
+
+    private func localizedDailyUsageDate(_ value: String) -> String {
+        let parser = DateFormatter()
+        parser.calendar = Calendar(identifier: .gregorian)
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.timeZone = TimeZone(secondsFromGMT: 0)
+        parser.dateFormat = "yyyy-MM-dd"
+        guard let date = parser.date(from: value) else { return value }
+        let formatter = DateFormatter()
+        formatter.locale = Locale.current
+        formatter.setLocalizedDateFormatFromTemplate("MMM d")
+        return formatter.string(from: date)
+    }
+
+    private func localizedInteger(_ value: Int64) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale.current
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: value)) ?? String(value)
     }
 
     private func appendAccountRows(
@@ -1794,6 +2088,7 @@ final class LimitRingsApp: NSObject {
 
     @objc private func refreshNow(_ sender: NSMenuItem) {
         updateState()
+        updateDailyUsage()
         updateFrame()
         updateRingVisibility()
     }
@@ -2248,6 +2543,8 @@ private struct CompatibilityDiagnostics: Encodable {
     var creditsAvailable: Bool
     var individualLimitAvailable: Bool
     var resetCreditsAvailable: Int64?
+    var dailyUsageAvailable: Bool
+    var dailyUsageBucketCount: Int
     var notificationsEnabled: Bool
     var reduceMotion: Bool
     var increaseContrast: Bool
@@ -2256,6 +2553,7 @@ private struct CompatibilityDiagnostics: Encodable {
 
 func runDiagnostics(config: LimitRingsConfig) -> Bool {
     let probe = AppServerLimitStateReader(codexHome: config.codexHome).readResult()
+    let usageProbe = AppServerAccountUsageReader(codexHome: config.codexHome).readLatest()
     let runningCodex = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first
     let codexBundle = runningCodex?.bundleURL.flatMap { Bundle(url: $0) }
     let stateData = try? Data(contentsOf: config.globalStatePath)
@@ -2286,6 +2584,8 @@ func runDiagnostics(config: LimitRingsConfig) -> Bool {
         creditsAvailable: probe.state?.credits?.hasCredits ?? false,
         individualLimitAvailable: probe.state?.individualLimit != nil,
         resetCreditsAvailable: probe.state?.resetCreditsAvailable,
+        dailyUsageAvailable: usageProbe.snapshot != nil,
+        dailyUsageBucketCount: usageProbe.snapshot?.buckets.count ?? 0,
         notificationsEnabled: UserDefaults.standard.bool(forKey: notificationsEnabledDefaultsKey),
         reduceMotion: accessibility.reduceMotion,
         increaseContrast: accessibility.increaseContrast,

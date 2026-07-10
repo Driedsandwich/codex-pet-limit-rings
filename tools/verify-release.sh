@@ -42,9 +42,15 @@ if grep -En 'access_token|Authorization.*Bearer|URLSession\.shared|backend-api/w
   exit 1
 fi
 
-if grep -En 'account/rateLimitResetCredit/consume|account/usage/read|thread/tokenUsage/updated' \
+if grep -En 'account/rateLimitResetCredit/consume|thread/tokenUsage/updated|thread/(resume|fork|read|list)' \
   "$ROOT/tools/codex-pet-limit-rings.swift"; then
-  echo "release verification failed: excluded mutation or v0.7 data path found in v0.6 source" >&2
+  echo "release verification failed: excluded account mutation or thread data path found" >&2
+  exit 1
+fi
+
+if grep -En 'UserDefaults[^\n]*dailyUsage|dailyUsage[^\n]*UserDefaults|threadId|turnId' \
+  "$ROOT/tools/codex-pet-limit-rings.swift"; then
+  echo "release verification failed: daily usage persistence or thread identifiers found" >&2
   exit 1
 fi
 

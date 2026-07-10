@@ -1,5 +1,6 @@
 "menu.waiting" = "Waiting for Codex limit data";
 "menu.limitDetails" = "Limit Details";
+"menu.dailyUsage" = "Daily Usage";
 "menu.showRings" = "Show Rings";
 "menu.notifications" = "Limit Notifications";
 "menu.refresh" = "Refresh Now";
@@ -20,6 +21,10 @@
 "details.creditsBalance" = "Credits balance: %@";
 "details.monthly" = "Monthly limit: %@ remaining (%@ / %@ used)";
 "details.reached" = "Limit status: %@";
+"usage.loading" = "Loading daily usage…";
+"usage.unavailable" = "Daily usage is unavailable in this Codex version or account";
+"usage.empty" = "No daily usage is available yet";
+"usage.row" = "%@  %@  %@ tokens";
 "reached.rate" = "rate limit reached";
 "reached.ownerCredits" = "workspace credits depleted";
 "reached.memberCredits" = "member credits depleted";

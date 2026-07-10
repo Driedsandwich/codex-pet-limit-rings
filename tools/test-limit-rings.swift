@@ -18,6 +18,8 @@ struct LimitRingsTests {
         do {
             try testCodexCLIPathsCoverCurrentChatGPTAppAndPath()
             try testAppServerRateLimitDecode()
+            try testAccountUsageDecodeAndFourteenDayNormalization()
+            try testAccountUsageEmptyAndAccessibleBars()
             try testNotificationTransitionsAndDedupe()
             try testNotificationsAreOffByDefault()
             try testAccessibilityPresentationIsExplicit()
@@ -60,6 +62,38 @@ struct LimitRingsTests {
         try expect(state.individualLimit?.remainingPercent == 75, "expected monthly spend-control limit")
         try expect(state.resetCreditsAvailable == 2, "expected reset-credit count")
         try expect(state.source == "app-server", "expected app-server source label")
+    }
+
+    private static func testAccountUsageDecodeAndFourteenDayNormalization() throws {
+        let buckets = (1...16).map { day in
+            String(format: #"{"startDate":"2026-06-%02d","tokens":%d}"#, day, day * 100)
+        }.joined(separator: ",")
+        let line = #"{"id":2,"result":{"summary":{"included":true},"dailyUsageBuckets":["# + buckets + #"]}}"#
+        guard let snapshot = AppServerAccountUsageReader.decodeAccountUsage(from: line) else {
+            throw LimitRingsTestError.failed("expected account usage response to decode")
+        }
+        try expect(snapshot.buckets.count == 14, "expected only the latest fourteen daily buckets")
+        try expect(snapshot.buckets.first?.startDate == "2026-06-03", "expected chronological fourteen-day window")
+        try expect(snapshot.buckets.last?.tokens == 1600, "expected the newest bucket value")
+
+        let normalized = normalizedDailyUsageBuckets([
+            DailyUsageBucket(startDate: "invalid", tokens: 1),
+            DailyUsageBucket(startDate: "2026-07-01", tokens: -1),
+            DailyUsageBucket(startDate: "2026-07-02", tokens: 10),
+            DailyUsageBucket(startDate: "2026-07-02", tokens: 20)
+        ])
+        try expect(normalized == [DailyUsageBucket(startDate: "2026-07-02", tokens: 20)], "expected invalid, negative, and duplicate buckets to normalize safely")
+    }
+
+    private static func testAccountUsageEmptyAndAccessibleBars() throws {
+        let line = #"{"id":2,"result":{"dailyUsageBuckets":null}}"#
+        guard let snapshot = AppServerAccountUsageReader.decodeAccountUsage(from: line) else {
+            throw LimitRingsTestError.failed("expected nullable daily buckets to decode as an empty state")
+        }
+        try expect(snapshot.buckets.isEmpty, "expected nullable buckets to produce an empty state")
+        try expect(dailyUsageBar(tokens: 0, maximum: 100) == "··········", "expected zero usage to have a textual empty bar")
+        try expect(dailyUsageBar(tokens: 1, maximum: 100).hasPrefix("▮"), "expected positive usage to remain distinguishable without color")
+        try expect(dailyUsageBar(tokens: 100, maximum: 100) == "▮▮▮▮▮▮▮▮▮▮", "expected maximum usage to fill the textual bar")
     }
 
     private static func testNotificationTransitionsAndDedupe() throws {
