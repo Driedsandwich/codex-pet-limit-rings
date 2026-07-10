@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${1:-0.5.0}"
+VERSION="${1:-0.5.1}"
 MODE="${2:-run}"
 REPOSITORY="${RELEASE_REPOSITORY:-Driedsandwich/codex-pet-limit-rings}"
 
