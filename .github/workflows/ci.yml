@@ -23,4 +23,11 @@ jobs:
       - name: Verify build, tests, privacy, and release metadata
         run: tools/verify-release.sh
       - name: Smoke-test the published v0.5.0 artifact
-        run: tools/smoke-release-artifact.sh 0.5.0
+        env:
+          EXPECTED_MIN_OS: "26.0"
+        run: |
+          if [[ "${{ matrix.os }}" == "macos-15" ]]; then
+            tools/smoke-release-artifact.sh 0.5.0 --inspect-only
+          else
+            tools/smoke-release-artifact.sh 0.5.0
+          fi

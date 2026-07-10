@@ -48,5 +48,6 @@ Fork creation, both branch pushes, both pull requests, downstream merge, tag, an
 - Upstream maintainer response and merge timing are unknown.
 - The upstream repository does not currently report checks for pull request #3.
 - Code signing and notarization are not part of `v0.5.0`.
+- The published v0.5.0 binary has a minimum deployment target of macOS 26.0; macOS 15 is supported through the source-build path, and a broadly compatible binary requires a future release built with an explicit deployment target.
 - Pet global-state keys remain an undocumented desktop implementation detail.
 - This final record commit was made on the retained feature branch after pull request #1 merged; syncing it into `main` requires a later documentation-only pull request.

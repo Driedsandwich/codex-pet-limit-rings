@@ -2,10 +2,16 @@
 set -euo pipefail
 
 VERSION="${1:-0.5.0}"
+MODE="${2:-run}"
 REPOSITORY="${RELEASE_REPOSITORY:-Driedsandwich/codex-pet-limit-rings}"
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "artifact smoke test failed: invalid version '$VERSION'" >&2
+  exit 2
+fi
+
+if [[ "$MODE" != "run" && "$MODE" != "--inspect-only" ]]; then
+  echo "artifact smoke test failed: invalid mode '$MODE'" >&2
   exit 2
 fi
 
@@ -40,13 +46,28 @@ test -x "$BIN"
 codesign --verify --deep --strict "$APP"
 file "$BIN" | grep -q 'arm64'
 
+minimum_os="$(vtool -show-build "$BIN" | awk '$1 == "minos" { print $2; exit }')"
+if [[ -z "$minimum_os" ]]; then
+  echo "artifact smoke test failed: minimum macOS version is unreadable" >&2
+  exit 1
+fi
+
+if [[ -n "${EXPECTED_MIN_OS:-}" && "$minimum_os" != "$EXPECTED_MIN_OS" ]]; then
+  echo "artifact smoke test failed: expected minimum macOS $EXPECTED_MIN_OS, found $minimum_os" >&2
+  exit 1
+fi
+
 artifact_version="$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")"
 if [[ "$artifact_version" != "$VERSION" ]]; then
   echo "artifact smoke test failed: expected v$VERSION, found v$artifact_version" >&2
   exit 1
 fi
 
-"$BIN" --preview "$PREVIEW" --size 164
-test -s "$PREVIEW"
+if [[ "$MODE" == "run" ]]; then
+  "$BIN" --preview "$PREVIEW" --size 164
+  test -s "$PREVIEW"
+else
+  echo "artifact execution skipped; static inspection found minimum macOS $minimum_os"
+fi
 
-echo "published artifact smoke test passed for v$VERSION"
+echo "published artifact smoke test passed for v$VERSION (minimum macOS $minimum_os)"

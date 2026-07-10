@@ -42,6 +42,8 @@ Pet wakeups are handled by a lightweight filesystem watcher on Codex's local glo
 
 ### Install The Published v0.5.0 App
 
+The published v0.5.0 app bundle was built with a minimum deployment target of macOS 26. On macOS 15, use the source installation below instead; the source release gate is tested on both macOS 15 and macOS 26.
+
 Download the published app and its checksum from the [v0.5.0 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.5.0), then verify the ZIP before opening it:
 
 ```bash
@@ -226,6 +228,12 @@ Smoke-test the published release without replacing the installed app:
 
 ```bash
 tools/smoke-release-artifact.sh 0.5.0
+```
+
+On an older macOS host, perform checksum, signature, architecture, version, and deployment-target inspection without launching the binary:
+
+```bash
+EXPECTED_MIN_OS=26.0 tools/smoke-release-artifact.sh 0.5.0 --inspect-only
 ```
 
 ## Experiments
