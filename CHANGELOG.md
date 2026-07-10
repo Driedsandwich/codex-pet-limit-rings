@@ -4,7 +4,13 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
-No changes yet.
+### Daily Usage Insights
+
+- Add a read-only Daily Usage submenu using stable app-server `account/usage/read`, refreshed every 15 minutes and retained only in memory.
+- Show the latest 14 daily buckets as localized textual bar rows, including explicit loading, empty, and unsupported states.
+- Keep the view accessible through motion-free updates, system contrast, and bars that remain distinguishable without color.
+- Continue excluding thread usage, thread identifiers, transcript parsing, durable usage storage, notifications, experimental APIs, and account mutation.
+- Release CI now smoke-tests the published v0.6.0 artifact on macOS 15 and macOS 26.
 
 ## 0.6.0 - 2026-07-11
 

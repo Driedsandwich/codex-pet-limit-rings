@@ -61,12 +61,13 @@ launchctl print "gui/$(id -u)/com.codex-pet.limit-rings" >/dev/null
 The rings read:
 
 - `codex app-server --stdio` and its stable `account/rateLimits/read` method for primary usage-limit data.
+- The stable `account/usage/read` method every 15 minutes for a memory-only, last-14-days daily usage view.
 - `~/.codex/.codex-global-state.json` for `electron-avatar-overlay-open` and `electron-avatar-overlay-bounds.mascot`.
 - The newest existing `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite` for fallback to the newest current `codex.rate_limits` event when app-server fails.
 
 The app must not read `auth.json` or call the undocumented `backend-api/wham/usage` endpoint. The outer ring is the short-window remaining percentage. The inner ring is the weekly remaining percentage. The menu summary distinguishes `App Server`, `Cached`, and `Local` sources and must not show expired values as current. The details submenu may show multiple limit buckets, credits, monthly spend control, reached reasons, and reset-credit availability, but must never consume a reset credit or mutate the account.
 
-Notifications are local, off by default, and request permission only after the user enables them. Cached or SQLite fallback values must not trigger notifications. Keep `account/usage/read` and `thread/tokenUsage/updated` outside the v0.6.0 workflow.
+Notifications are local, off by default, and request permission only after the user enables them. Cached or SQLite fallback values must not trigger notifications. Daily usage must not be written to preferences, SQLite, JSONL, or another durable store. Do not subscribe to `thread/tokenUsage/updated`, resume or fork threads, or retain thread identifiers.
 
 Honor Reduced Motion, Increase Contrast, and Differentiate Without Color. Keep English and Japanese localization resources in the app bundle.
 
@@ -88,7 +89,7 @@ deployment_target="$(plutil -extract LSMinimumSystemVersion raw tools/CodexPetLi
 swiftc -parse-as-library -target "arm64-apple-macosx$deployment_target" tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -framework UserNotifications -lsqlite3
 tools/test-limit-rings.sh
 tools/verify-release.sh
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.5.1
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.6.0
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 ```
 

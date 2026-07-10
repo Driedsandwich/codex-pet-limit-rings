@@ -10,6 +10,7 @@ The rings are pet-agnostic. They work with any pet Codex displays because the ap
 - `Show Rings` toggles the overlay without quitting the app.
 - `Refresh Now` rereads usage and pet-position state.
 - `Limit Details` lists every returned limit bucket plus read-only credit, monthly limit, reached-status, and reset-credit summaries.
+- `Daily Usage` shows up to 14 recent daily token buckets as localized text-labelled bars and refreshes every 15 minutes.
 - `Limit Notifications` is off by default. Enabling it is the only action that requests macOS notification permission.
 - Hovering over the ring or pet shows exact remaining percentages at the arc endpoints.
 - Dragging the pet makes the rings follow the gesture immediately while Codex persists the new position.
@@ -23,6 +24,7 @@ The rings are pet-agnostic. They work with any pet Codex displays because the ap
 The app reads live usage first, then local files as support or fallback:
 
 - `codex app-server --stdio`: primary rate-limit source using the stable `account/rateLimits/read` request after the required `initialize` / `initialized` handshake.
+- The same stable app-server interface provides `account/usage/read` to a separate short-lived reader. Only normalized daily date/token buckets remain in memory.
 - `~/.codex/.codex-global-state.json`: current pet bounds, using `electron-avatar-overlay-bounds.mascot`.
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
 - The newest existing `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite`: fallback source using the newest current `codex.rate_limits` event when app-server fails.
@@ -35,7 +37,7 @@ No OpenAI API key is required. The app no longer reads ChatGPT bearer tokens fro
 
 The full `account/rateLimits/read` snapshot is decoded read-only. The app can display `rateLimitsByLimitId`, credit availability and balance, individual monthly spend control, limit-reached reason, and the available reset-credit count. It never calls `account/rateLimitResetCredit/consume` and does not mutate the account.
 
-Daily account usage and per-thread token usage are outside v0.6.0. The app does not call `account/usage/read`, subscribe to `thread/tokenUsage/updated`, inspect prompts, or retain thread identifiers.
+Daily account usage is read-only in v0.7.0, refreshed every 15 minutes, and never persisted. Per-thread usage remains excluded: the app does not subscribe to `thread/tokenUsage/updated`, resume or fork threads, inspect prompts, retain thread identifiers, or parse SQLite/JSONL for usage.
 
 The app discovers Codex CLI installations from explicit environment overrides, the current `ChatGPT.app` bundle, older `Codex.app` bundles, Homebrew locations, and `PATH`. `--diagnose` reports compatibility state as JSON without emitting tokens or user-specific paths.
 
@@ -47,6 +49,7 @@ The app discovers Codex CLI installations from explicit environment overrides, t
 - Exact percentages are shown only on hover to keep the pet feeling ambient rather than dashboard-like.
 - Additional model-limit buckets may appear as small outer markers when available.
 - Reduced Motion freezes pulse and glint animation. Increase Contrast strengthens tracks and readouts. Differentiate Without Color uses a dashed secondary ring and alternating marker shapes.
+- Daily bars use filled and dotted text segments plus numeric token labels, so they do not depend on color or animation and inherit macOS contrast behavior.
 
 ## Notifications And Localization
 
