@@ -31,7 +31,8 @@ private let petFrameStateDebounceInterval: TimeInterval = 0.035
 private let dragFollowInterval: TimeInterval = 1.0 / 60.0
 private let dragLiveMismatchTolerance: CGFloat = 96.0
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
-private let liveUsageURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
+private let appServerLimitStateTimeout: TimeInterval = 5.0
+private let limitStateFallbackMaxAge: TimeInterval = 30 * 60
 
 private struct EventPayload: Decodable {
     var type: String
@@ -40,31 +41,280 @@ private struct EventPayload: Decodable {
     var additional_rate_limits: [String: RatePayload]?
 }
 
-private struct AuthPayload: Decodable {
-    var tokens: AuthTokens?
-}
-
-private struct AuthTokens: Decodable {
-    var access_token: String?
-}
-
-private struct UsagePayload: Decodable {
-    var plan_type: String?
-    var rate_limit: RatePayload?
-    var additional_rate_limits: [AdditionalUsagePayload]?
-}
-
-private struct AdditionalUsagePayload: Decodable {
-    var limit_name: String?
-    var metered_feature: String?
-    var rate_limit: RatePayload?
-}
-
 private struct RatePayload: Decodable {
     var primary: BucketPayload?
     var secondary: BucketPayload?
     var primary_window: BucketPayload?
     var secondary_window: BucketPayload?
+}
+
+private struct AppServerInitializeRequest: Encodable {
+    var id = 1
+    var method = "initialize"
+    var params = AppServerInitializeParams()
+}
+
+private struct AppServerInitializeParams: Encodable {
+    var clientInfo = AppServerClientInfo()
+}
+
+private struct AppServerClientInfo: Encodable {
+    var name = "codex-pet-limit-rings"
+    var title = "Codex Pet Limit Rings"
+    var version = "0.5.0"
+}
+
+private struct AppServerInitializedNotification: Encodable {
+    var method = "initialized"
+}
+
+private struct AppServerRateLimitReadRequest: Encodable {
+    var id = 2
+    var method = "account/rateLimits/read"
+}
+
+private struct AppServerResponseID: Decodable {
+    var id: Int?
+}
+
+private struct AppServerRateLimitReadResponse: Decodable {
+    var id: Int?
+    var result: AppServerRateLimitResult?
+}
+
+struct AppServerRateLimitResult: Decodable {
+    var rateLimits: AppServerRateLimitSnapshot
+    var rateLimitsByLimitId: [String: AppServerRateLimitSnapshot]?
+
+    func toLimitState(observedAt: Date) -> LimitState? {
+        let selected = rateLimitsByLimitId?["codex"] ?? rateLimits
+        let primary = selected.primary?.toBucket()
+        let secondary = selected.secondary?.toBucket()
+        guard primary != nil || secondary != nil else {
+            return nil
+        }
+
+        let selectedID = selected.limitId ?? "codex"
+        let additional = (rateLimitsByLimitId ?? [:])
+            .compactMap { limitID, snapshot -> (String, LimitBucket)? in
+                guard limitID != selectedID,
+                      limitID != "codex",
+                      let bucket = (snapshot.primary ?? snapshot.secondary)?.toBucket() else {
+                    return nil
+                }
+                return (snapshot.limitName ?? limitID, bucket)
+            }
+            .sorted { $0.0.localizedCaseInsensitiveCompare($1.0) == .orderedAscending }
+
+        return LimitState(
+            planType: selected.planType,
+            primary: primary,
+            secondary: secondary,
+            additional: additional,
+            observedAt: observedAt,
+            source: "app-server"
+        )
+    }
+}
+
+struct AppServerRateLimitSnapshot: Decodable {
+    var limitId: String?
+    var limitName: String?
+    var primary: AppServerRateLimitWindow?
+    var secondary: AppServerRateLimitWindow?
+    var planType: String?
+}
+
+struct AppServerRateLimitWindow: Decodable {
+    var usedPercent: Double?
+    var windowDurationMins: Double?
+    var resetsAt: Double?
+
+    func toBucket() -> LimitBucket? {
+        guard let used = usedPercent else { return nil }
+        if let minutes = windowDurationMins, minutes <= 0 {
+            return nil
+        }
+        return LimitBucket(usedPercent: used, windowMinutes: windowDurationMins, resetAt: resetsAt)
+    }
+}
+
+struct AppServerProbeResult {
+    var state: LimitState?
+    var cliPath: URL?
+    var errorCode: String?
+}
+
+func defaultCodexCLIPaths(home: URL, environment: [String: String]) -> [String] {
+    let pathCandidates = (environment["PATH"] ?? "")
+        .split(separator: ":")
+        .map { String($0) + "/codex" }
+
+    return [
+        environment["CODEX_PET_LIMIT_RINGS_CODEX_CLI"],
+        environment["CODEX_CLI"],
+        "/Applications/ChatGPT.app/Contents/Resources/codex",
+        home.appendingPathComponent("Applications/ChatGPT.app/Contents/Resources/codex").path,
+        "/Applications/Codex.app/Contents/Resources/codex",
+        home.appendingPathComponent("Applications/Codex.app/Contents/Resources/codex").path,
+        "/opt/homebrew/bin/codex",
+        "/usr/local/bin/codex"
+    ].compactMap { $0 } + pathCandidates
+}
+
+final class AppServerLimitStateReader {
+    private let codexHome: URL
+
+    init(codexHome: URL) {
+        self.codexHome = codexHome
+    }
+
+    func readLatest() -> LimitState? {
+        readResult().state
+    }
+
+    func readResult() -> AppServerProbeResult {
+        guard let codexCLI = findCodexCLI() else {
+            return AppServerProbeResult(state: nil, cliPath: nil, errorCode: "cli_not_found")
+        }
+
+        let process = Process()
+        process.executableURL = codexCLI
+        process.arguments = ["app-server", "--stdio"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["CODEX_HOME"] = codexHome.path
+        process.environment = environment
+
+        let stdin = Pipe()
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        let lock = NSLock()
+        let semaphore = DispatchSemaphore(value: 0)
+        var buffer = ""
+        var resolved = false
+        var initialized = false
+        var state: LimitState?
+        var errorCode: String?
+
+        func resolve(_ candidate: LimitState?, error: String?) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !resolved else { return }
+            state = candidate
+            errorCode = error
+            resolved = true
+            semaphore.signal()
+        }
+
+        stdout.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else {
+                return
+            }
+
+            lock.lock()
+            buffer += chunk
+            let lines = Self.drainLines(from: &buffer)
+            lock.unlock()
+
+            for line in lines {
+                guard let responseID = Self.responseID(in: line, decoder: decoder) else {
+                    continue
+                }
+                if responseID == 1, !initialized {
+                    initialized = true
+                    do {
+                        try Self.write(AppServerInitializedNotification(), to: stdin.fileHandleForWriting, encoder: encoder)
+                        try Self.write(AppServerRateLimitReadRequest(), to: stdin.fileHandleForWriting, encoder: encoder)
+                    } catch {
+                        resolve(nil, error: "request_write_failed")
+                    }
+                } else if responseID == 2 {
+                    guard let decoded = Self.decodeRateLimitState(from: line, decoder: decoder) else {
+                        resolve(nil, error: "invalid_rate_limit_response")
+                        continue
+                    }
+                    resolve(decoded, error: nil)
+                }
+            }
+        }
+        stderr.fileHandleForReading.readabilityHandler = { handle in
+            _ = handle.availableData
+        }
+        process.terminationHandler = { _ in
+            resolve(nil, error: initialized ? "app_server_terminated" : "initialize_failed")
+        }
+
+        do {
+            try process.run()
+            try Self.write(AppServerInitializeRequest(), to: stdin.fileHandleForWriting, encoder: encoder)
+        } catch {
+            return AppServerProbeResult(state: nil, cliPath: codexCLI, errorCode: "launch_failed")
+        }
+
+        if semaphore.wait(timeout: .now() + appServerLimitStateTimeout) == .timedOut {
+            resolve(nil, error: initialized ? "rate_limit_timeout" : "initialize_timeout")
+        }
+        stdout.fileHandleForReading.readabilityHandler = nil
+        stderr.fileHandleForReading.readabilityHandler = nil
+        stdin.fileHandleForWriting.closeFile()
+        if process.isRunning {
+            process.terminate()
+            process.waitUntilExit()
+        }
+
+        lock.lock()
+        defer { lock.unlock() }
+        return AppServerProbeResult(state: state, cliPath: codexCLI, errorCode: errorCode)
+    }
+
+    static func decodeRateLimitState(from line: String, decoder: JSONDecoder = JSONDecoder()) -> LimitState? {
+        guard let data = line.data(using: .utf8),
+              let response = try? decoder.decode(AppServerRateLimitReadResponse.self, from: data),
+              response.id == 2 else {
+            return nil
+        }
+        return response.result?.toLimitState(observedAt: Date())
+    }
+
+    private func findCodexCLI() -> URL? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let environment = ProcessInfo.processInfo.environment
+        var seen = Set<String>()
+        return defaultCodexCLIPaths(home: home, environment: environment)
+            .filter { seen.insert($0).inserted }
+            .map { URL(fileURLWithPath: $0) }
+            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
+
+    private static func write<T: Encodable>(_ payload: T, to handle: FileHandle, encoder: JSONEncoder) throws {
+        var data = try encoder.encode(payload)
+        data.append(0x0a)
+        handle.write(data)
+    }
+
+    private static func drainLines(from buffer: inout String) -> [String] {
+        var lines: [String] = []
+        while let newline = buffer.firstIndex(of: "\n") {
+            lines.append(String(buffer[..<newline]))
+            buffer.removeSubrange(buffer.startIndex...newline)
+        }
+        return lines
+    }
+
+    private static func responseID(in line: String, decoder: JSONDecoder) -> Int? {
+        guard let data = line.data(using: .utf8),
+              let response = try? decoder.decode(AppServerResponseID.self, from: data) else {
+            return nil
+        }
+        return response.id
+    }
 }
 
 private struct BucketPayload: Decodable {
@@ -84,77 +334,51 @@ struct LimitRingsConfig {
     var codexHome: URL
     var globalStatePath: URL
     var logsPath: URL
-    var authPath: URL
     var previewPath: URL?
+    var diagnose = false
     var fallbackSize: CGFloat = 220
 }
 
 final class LimitStateReader {
     private let logsPath: URL
-    private let authPath: URL
+    private let appServerStateProvider: (() -> LimitState?)?
+    private var lastAppServerState: LimitState?
 
-    init(logsPath: URL, authPath: URL) {
+    init(
+        logsPath: URL,
+        codexHome: URL? = nil,
+        appServerStateProvider: (() -> LimitState?)? = nil
+    ) {
         self.logsPath = logsPath
-        self.authPath = authPath
+        if let appServerStateProvider {
+            self.appServerStateProvider = appServerStateProvider
+        } else if let codexHome {
+            let appServerReader = AppServerLimitStateReader(codexHome: codexHome)
+            self.appServerStateProvider = { appServerReader.readLatest() }
+        } else {
+            self.appServerStateProvider = nil
+        }
     }
 
     func readLatest() -> LimitState {
-        if let liveState = readLiveUsage() {
-            return liveState
-        }
-        return readLatestLog()
-    }
-
-    private func readLiveUsage() -> LimitState? {
-        guard let token = readAccessToken() else {
-            return nil
+        if let appServerState = appServerStateProvider?() {
+            lastAppServerState = appServerState
+            return appServerState
         }
 
-        var request = URLRequest(url: liveUsageURL)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 6.0
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        let semaphore = DispatchSemaphore(value: 0)
-        var resultData: Data?
-        var resultResponse: URLResponse?
-        URLSession.shared.dataTask(with: request) { data, response, _ in
-            resultData = data
-            resultResponse = response
-            semaphore.signal()
-        }.resume()
-
-        guard semaphore.wait(timeout: .now() + 7.0) == .success,
-              let http = resultResponse as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode),
-              let data = resultData,
-              let payload = try? JSONDecoder().decode(UsagePayload.self, from: data) else {
-            return nil
+        let logState = readLatestLog()
+        if isDisplayableLimitState(logState), isCurrentLimitState(logState, now: Date()) {
+            return logState
         }
 
-        let primary = (payload.rate_limit?.primary ?? payload.rate_limit?.primary_window)?.toBucket()
-        let secondary = (payload.rate_limit?.secondary ?? payload.rate_limit?.secondary_window)?.toBucket()
-        let additional = (payload.additional_rate_limits ?? [])
-            .compactMap { item -> (String, LimitBucket)? in
-                guard let bucket = (item.rate_limit?.primary ?? item.rate_limit?.primary_window ?? item.rate_limit?.secondary ?? item.rate_limit?.secondary_window)?.toBucket() else {
-                    return nil
-                }
-                return (item.limit_name ?? item.metered_feature ?? "Additional", bucket)
-            }
-            .sorted { $0.0.localizedCaseInsensitiveCompare($1.0) == .orderedAscending }
-
-        return LimitState(planType: payload.plan_type, primary: primary, secondary: secondary, additional: additional, observedAt: Date(), source: "live")
-    }
-
-    private func readAccessToken() -> String? {
-        guard let data = try? Data(contentsOf: authPath),
-              let payload = try? JSONDecoder().decode(AuthPayload.self, from: data),
-              let token = payload.tokens?.access_token,
-              !token.isEmpty else {
-            return nil
+        if var cached = lastAppServerState,
+           Date().timeIntervalSince(cached.observedAt) <= limitStateFallbackMaxAge,
+           isCurrentLimitState(cached, now: Date()) {
+            cached.source = "cached"
+            return cached
         }
-        return token
+
+        return .empty
     }
 
     private func readLatestLog() -> LimitState {
@@ -170,7 +394,7 @@ final class LimitStateReader {
         defer { sqlite3_close(db) }
 
         let sql = """
-        SELECT feedback_log_body
+        SELECT ts, feedback_log_body
         FROM logs
         WHERE feedback_log_body LIKE '%"type":"codex.rate_limits"%'
         ORDER BY ts DESC, ts_nanos DESC, id DESC
@@ -184,10 +408,11 @@ final class LimitStateReader {
         defer { sqlite3_finalize(statement) }
 
         guard sqlite3_step(statement) == SQLITE_ROW,
-              let cText = sqlite3_column_text(statement, 0) else {
+              let cText = sqlite3_column_text(statement, 1) else {
             return .empty
         }
 
+        let observedAt = Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(statement, 0)))
         let body = String(cString: cText)
         guard let json = extractRateLimitJSON(from: body),
               let data = json.data(using: .utf8),
@@ -206,7 +431,29 @@ final class LimitStateReader {
             }
             .sorted { $0.0.localizedCaseInsensitiveCompare($1.0) == .orderedAscending }
 
-        return LimitState(planType: payload.plan_type, primary: primary, secondary: secondary, additional: additional, observedAt: Date(), source: "log")
+        let state = LimitState(
+            planType: payload.plan_type,
+            primary: primary,
+            secondary: secondary,
+            additional: additional,
+            observedAt: observedAt,
+            source: "local"
+        )
+        return isCurrentLimitState(state, now: Date()) ? state : .empty
+    }
+
+    private func isDisplayableLimitState(_ state: LimitState) -> Bool {
+        state.primary != nil || state.secondary != nil
+    }
+
+    private func isCurrentLimitState(_ state: LimitState, now: Date) -> Bool {
+        [state.primary, state.secondary].compactMap { $0 }.contains {
+            if let resetAt = $0.resetAt {
+                return resetAt > now.timeIntervalSince1970
+            }
+            let maxAge = max(($0.windowMinutes ?? 0) * 60, limitStateFallbackMaxAge)
+            return now.timeIntervalSince(state.observedAt) <= maxAge
+        }
     }
 
     private func extractRateLimitJSON(from body: String) -> String? {
@@ -324,7 +571,7 @@ final class PetFrameReader {
         return windows.compactMap { window -> CGRect? in
             let maxWidthDelta = max(80.0, expectedSize.width * 0.55)
             let maxHeightDelta = max(80.0, expectedSize.height * 0.55)
-            guard (window[kCGWindowOwnerName as String] as? String) == "Codex",
+            guard isCodexWindow(window),
                   let layer = number(window[kCGWindowLayer as String]),
                   layer > 0,
                   let bounds = window[kCGWindowBounds as String] as? [String: Any],
@@ -344,6 +591,18 @@ final class PetFrameReader {
         .min {
             liveOverlayScore($0, reference: reference, expectedSize: expectedSize) < liveOverlayScore($1, reference: reference, expectedSize: expectedSize)
         }
+    }
+
+    private func isCodexWindow(_ window: [String: Any]) -> Bool {
+        if let ownerPID = window[kCGWindowOwnerPID as String] as? NSNumber,
+           let runningApplication = NSRunningApplication(processIdentifier: pid_t(ownerPID.int32Value)),
+           runningApplication.bundleIdentifier == "com.openai.codex" {
+            return true
+        }
+
+        // Older standalone Codex builds exposed the owner name but could omit
+        // enough process metadata for bundle-identifier matching.
+        return (window[kCGWindowOwnerName as String] as? String) == "Codex"
     }
 
     private func liveOverlayScore(_ rect: CGRect, reference: CGRect, expectedSize: CGSize) -> CGFloat {
@@ -827,7 +1086,10 @@ final class LimitRingsApp: NSObject {
 
     init(config: LimitRingsConfig) {
         self.config = config
-        self.stateReader = LimitStateReader(logsPath: config.logsPath, authPath: config.authPath)
+        self.stateReader = LimitStateReader(
+            logsPath: config.logsPath,
+            codexHome: config.codexHome
+        )
         self.frameReader = PetFrameReader(globalStatePath: config.globalStatePath)
         self.ringView = LimitRingView(frame: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)))
         self.ringsVisible = UserDefaults.standard.object(forKey: ringsVisibleDefaultsKey) as? Bool ?? true
@@ -1090,9 +1352,15 @@ final class LimitRingsApp: NSObject {
         let secondary = ringView.state.secondary.map { "Weekly \(formatPercent($0.remainingPercent))" }
         let pieces = [primary, secondary].compactMap { $0 }
         if pieces.isEmpty {
-            summaryItem.title = "Waiting for Codex limit data"
+            summaryItem.title = "No current Codex limit data"
         } else {
-            let source = ringView.state.source == "live" ? "Live" : "Cached"
+            let source: String
+            switch ringView.state.source {
+            case "app-server": source = "App Server"
+            case "cached": source = "Cached"
+            case "local": source = "Local"
+            default: source = "Unknown"
+            }
             summaryItem.title = "\(source) " + pieces.joined(separator: " | ")
         }
     }
@@ -1438,7 +1706,10 @@ final class LimitRingsApp: NSObject {
 }
 
 func renderPreview(config: LimitRingsConfig) -> Bool {
-    let state = LimitStateReader(logsPath: config.logsPath, authPath: config.authPath).readLatest()
+    let state = LimitStateReader(
+        logsPath: config.logsPath,
+        codexHome: config.codexHome
+    ).readLatest()
     let size = CGSize(width: config.fallbackSize, height: config.fallbackSize)
     let image = NSImage(size: size)
     image.lockFocus()
@@ -1471,7 +1742,6 @@ func parseConfig() -> LimitRingsConfig? {
         codexHome: codexHome,
         globalStatePath: codexHome.appendingPathComponent(".codex-global-state.json"),
         logsPath: defaultLogsPath(codexHome: codexHome),
-        authPath: codexHome.appendingPathComponent("auth.json"),
         previewPath: nil
     )
 
@@ -1481,11 +1751,15 @@ func parseConfig() -> LimitRingsConfig? {
         switch arg {
         case "--help", "-h":
             print("""
-            Usage: codex-pet-limit-rings [--preview PATH] [--codex-home PATH] [--logs PATH] [--auth PATH] [--state PATH]
+            Usage: codex-pet-limit-rings [--preview PATH] [--diagnose] [--codex-home PATH] [--logs PATH] [--auth PATH] [--state PATH]
 
             Draws a transparent Codex rate-limit rings around the current pet.
+            --diagnose prints privacy-safe compatibility information as JSON.
+            --auth is accepted for compatibility but is no longer read.
             """)
             exit(0)
+        case "--diagnose":
+            config.diagnose = true
         case "--preview":
             guard let value = args.first else { return nil }
             args.removeFirst()
@@ -1497,15 +1771,13 @@ func parseConfig() -> LimitRingsConfig? {
             config.codexHome = url
             config.globalStatePath = url.appendingPathComponent(".codex-global-state.json")
             config.logsPath = defaultLogsPath(codexHome: url)
-            config.authPath = url.appendingPathComponent("auth.json")
         case "--logs":
             guard let value = args.first else { return nil }
             args.removeFirst()
             config.logsPath = URL(fileURLWithPath: value)
         case "--auth":
-            guard let value = args.first else { return nil }
+            guard args.first != nil else { return nil }
             args.removeFirst()
-            config.authPath = URL(fileURLWithPath: value)
         case "--state":
             guard let value = args.first else { return nil }
             args.removeFirst()
@@ -1524,24 +1796,119 @@ func parseConfig() -> LimitRingsConfig? {
 }
 
 func defaultLogsPath(codexHome: URL) -> URL {
-    let logs2 = codexHome.appendingPathComponent("logs_2.sqlite")
-    if FileManager.default.fileExists(atPath: logs2.path) {
+    if let logs2 = newestExistingPath([
+        codexHome.appendingPathComponent("sqlite/logs_2.sqlite"),
+        codexHome.appendingPathComponent("logs_2.sqlite")
+    ]) {
         return logs2
     }
+    if let logs1 = newestExistingPath([
+        codexHome.appendingPathComponent("sqlite/logs_1.sqlite"),
+        codexHome.appendingPathComponent("logs_1.sqlite")
+    ]) {
+        return logs1
+    }
+
     return codexHome.appendingPathComponent("logs_1.sqlite")
 }
 
-guard let config = parseConfig() else {
-    fputs("codex-pet-limit-rings: invalid arguments. Use --help.\n", stderr)
-    exit(2)
+private func newestExistingPath(_ candidates: [URL]) -> URL? {
+    candidates
+        .filter { FileManager.default.fileExists(atPath: $0.path) }
+        .max {
+            modificationDate(for: $0) < modificationDate(for: $1)
+        }
 }
 
-if config.previewPath != nil {
-    exit(renderPreview(config: config) ? 0 : 1)
+private func modificationDate(for url: URL) -> Date {
+    let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+    return (attributes?[.modificationDate] as? Date) ?? .distantPast
 }
 
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
-let rings = LimitRingsApp(config: config)
-rings.run()
-app.run()
+private struct CompatibilityDiagnostics: Encodable {
+    var appVersion: String
+    var codexAppRunning: Bool
+    var codexAppVersion: String?
+    var codexCLI: String
+    var appServer: String
+    var appServerError: String?
+    var globalStateExists: Bool
+    var avatarOverlayOpen: Bool?
+    var petFrameReadable: Bool
+    var primaryLimitAvailable: Bool
+    var secondaryLimitAvailable: Bool
+}
+
+func runDiagnostics(config: LimitRingsConfig) -> Bool {
+    let probe = AppServerLimitStateReader(codexHome: config.codexHome).readResult()
+    let runningCodex = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first
+    let codexBundle = runningCodex?.bundleURL.flatMap { Bundle(url: $0) }
+    let stateData = try? Data(contentsOf: config.globalStatePath)
+    let stateRoot = stateData.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    let avatarOpen: Bool?
+    if let value = stateRoot?["electron-avatar-overlay-open"] as? Bool {
+        avatarOpen = value
+    } else if let value = stateRoot?["electron-avatar-overlay-open"] as? NSNumber {
+        avatarOpen = value.boolValue
+    } else {
+        avatarOpen = nil
+    }
+
+    let diagnostics = CompatibilityDiagnostics(
+        appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development",
+        codexAppRunning: runningCodex != nil,
+        codexAppVersion: codexBundle?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+        codexCLI: codexCLISource(probe.cliPath),
+        appServer: probe.state == nil ? "unavailable" : "ready",
+        appServerError: probe.errorCode,
+        globalStateExists: stateData != nil,
+        avatarOverlayOpen: avatarOpen,
+        petFrameReadable: PetFrameReader(globalStatePath: config.globalStatePath).readPetFrameTopLeft() != nil,
+        primaryLimitAvailable: probe.state?.primary != nil,
+        secondaryLimitAvailable: probe.state?.secondary != nil
+    )
+
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    guard let data = try? encoder.encode(diagnostics),
+          let output = String(data: data, encoding: .utf8) else {
+        return false
+    }
+    print(output)
+    return true
+}
+
+private func codexCLISource(_ url: URL?) -> String {
+    guard let path = url?.path else { return "not-found" }
+    if path.contains("/ChatGPT.app/") { return "chatgpt-app-bundled" }
+    if path.contains("/Codex.app/") { return "codex-app-bundled" }
+    if path.hasPrefix("/opt/homebrew/") { return "homebrew-apple-silicon" }
+    if path.hasPrefix("/usr/local/") { return "homebrew-intel-or-local" }
+    return "configured-or-path"
+}
+
+#if !LIMIT_RINGS_TESTING
+@main
+struct LimitRingsMain {
+    static func main() {
+        guard let config = parseConfig() else {
+            fputs("codex-pet-limit-rings: invalid arguments. Use --help.\n", stderr)
+            exit(2)
+        }
+
+        if config.previewPath != nil {
+            exit(renderPreview(config: config) ? 0 : 1)
+        }
+
+        if config.diagnose {
+            exit(runDiagnostics(config: config) ? 0 : 1)
+        }
+
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let rings = LimitRingsApp(config: config)
+        rings.run()
+        app.run()
+    }
+}
+#endif

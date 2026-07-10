@@ -1,0 +1,36 @@
+# Downstream Scope
+
+## Baseline
+
+- Upstream repository: `petergpt/codex-pet-limit-rings`
+- Upstream baseline: `9962bd0c4df0c2f16e7e10af0b6c23db84702878`
+- License: MIT; the original copyright and license text remain unchanged.
+
+## Upstream-Compatible Commit
+
+The first downstream parent commit changes live pet-window matching from the visible owner name `Codex` to the application bundle identifier `com.openai.codex`, while retaining the legacy owner-name fallback. This is intentionally isolated so it can be proposed upstream without the rest of the downstream feature set.
+
+## Downstream-Only 0.5.x Work
+
+- Use stable Codex app-server `account/rateLimits/read` as the primary rate-limit source.
+- Discover the CLI in current `ChatGPT.app`, legacy `Codex.app`, Homebrew, explicit overrides, and `PATH`.
+- Remove direct `auth.json`, bearer-token, and undocumented `wham/usage` access from the app.
+- Keep a recent successful snapshot for up to 30 minutes only while its reset window remains current.
+- Select the newest current or legacy SQLite log database for local fallback.
+- Provide privacy-safe `--diagnose` output without tokens, account identifiers, or user paths.
+- Add regression tests, CI, release verification, and rollback documentation.
+
+## Deliberately Excluded
+
+- No automatic reset-credit consumption or other account mutation.
+- No Stop hook, prompt inspection, or raw transcript collection.
+- No bundled credentials, API keys, screenshots with private content, or local Codex data.
+- No automatic updater, code signing, notarization, Windows port, or per-turn usage overlay in 0.5.x.
+
+## Known Compatibility Risks
+
+- The Codex app-server command is still labeled experimental even though the rate-limit methods used here are present in its stable generated schema.
+- Pet placement still relies on Codex desktop global-state keys that are not a published compatibility contract.
+- SQLite event structure is a fallback only and may change; app-server remains the preferred source.
+
+When these inputs change, update fixtures and diagnostics before changing rendering behavior.

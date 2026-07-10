@@ -22,11 +22,19 @@ When the Codex pet is closed, the rings disappear. When the pet comes back, they
 
 Because the rings are drawn in a separate transparent overlay, they do not need pet-specific sprites, masks, metadata, or configuration. Change pets in Codex and the rings follow the new one automatically.
 
+## Driedsandwich Compatibility Line
+
+The `0.5.x` downstream line keeps the original companion-app design and MIT license while focusing on compatibility with current ChatGPT/Codex desktop builds. It adds official app-server rate-limit reads, privacy-safe diagnostics, bounded fallback behavior, regression tests, and a shared local/CI release gate.
+
+The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
+
+Publication provenance and current release status are recorded in [PUBLICATION_RECORD.md](PUBLICATION_RECORD.md).
+
 ## Why It Works This Way
 
 The important design choice is the companion boundary. A menu item inside Codex itself would mean patching Electron app files and redoing that patch after app updates. That is brittle and hard to open source.
 
-`codex-pet-limit-rings` stays outside the Codex app. It reads local Codex state, asks ChatGPT for live usage data using the local Codex/ChatGPT token, and renders its own transparent always-on-top window around the pet. The result is reversible, inspectable, and easy for another Codex agent to install or modify.
+`codex-pet-limit-rings` stays outside the Codex app. It reads local pet-position state, asks the bundled Codex app-server for rate limits, and renders its own transparent always-on-top window around the pet. The result is reversible, inspectable, and easy for another Codex agent to install or modify without copying ChatGPT credentials.
 
 Pet wakeups are handled by a lightweight filesystem watcher on Codex's local global-state file, with a slow fallback timer as a safety net. That lets the rings snap back when the pet is re-enabled without constantly polling for position changes.
 
@@ -78,13 +86,21 @@ tools/install-codex-skill.sh
 
 ## Data And Privacy
 
-The app reads only local Codex files and one ChatGPT usage endpoint:
+The app asks the Codex app-server for rate limits, then uses local Codex files only as support or fallback:
 
+- The bundled or installed `codex app-server --stdio` provides the stable `account/rateLimits/read` protocol surface.
 - `~/.codex/.codex-global-state.json` tells it whether the pet is open and where it is.
-- `~/.codex/auth.json` provides the local bearer token used to read live usage from ChatGPT.
-- `~/.codex/logs_2.sqlite` is used as a cached fallback if live usage is unavailable.
+- The newest available `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite` is used as a local fallback if app-server is unavailable.
 
-It does not require an OpenAI API key. It does not send pet images, screenshots, prompts, or repo contents anywhere.
+It does not read `~/.codex/auth.json`, copy ChatGPT bearer tokens, or call the undocumented `backend-api/wham/usage` endpoint. It does not require an OpenAI API key and does not send pet images, screenshots, prompts, or repo contents anywhere.
+
+If app-server fails briefly, the last successful snapshot remains available for up to 30 minutes while its reset window is still current. The menu labels the active source as `App Server`, `Cached`, or `Local` and reports `No current Codex limit data` instead of presenting expired values.
+
+Run a privacy-safe compatibility check without printing tokens or user paths:
+
+```bash
+~/Applications/CodexPetLimitRings.app/Contents/MacOS/CodexPetLimitRings --diagnose
+```
 
 ## Project Shape
 
@@ -96,12 +112,18 @@ tools/
   run-limit-rings.sh               development launch
   build-limit-rings.sh             app bundle builder
   install-codex-skill.sh           copy the bundled skill into ~/.codex/skills
+  test-limit-rings.sh              compile and run regression tests
+  verify-release.sh                run the local and CI release gate
+  package-release.sh               build a checked macOS arm64 release ZIP
 
 skills/codex-pet-limit-rings/
   SKILL.md                         Codex-agent workflow for this project
 
 docs/
+  downstream-scope.md                upstream baseline and downstream boundary
   limit-rings.md                   implementation contract and data flow
+  rollback.md                      backup and rollback procedure
+  release-checklist.md             publication evidence checklist
 
 experiments/weather-pets/
   earlier weather-pet renderer     kept as a separate experiment
@@ -118,14 +140,32 @@ tools/build-limit-rings.sh
 Render a static preview PNG:
 
 ```bash
-swiftc tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
+swiftc -parse-as-library tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
+```
+
+Run the compatibility and cache regression tests:
+
+```bash
+tools/test-limit-rings.sh
 ```
 
 Validate the shell scripts:
 
 ```bash
 bash -n tools/*.sh
+```
+
+Run the complete local/CI release gate:
+
+```bash
+tools/verify-release.sh
+```
+
+Build an ad-hoc-signed macOS arm64 ZIP and SHA-256 file under ignored `dist/`:
+
+```bash
+tools/package-release.sh
 ```
 
 ## Experiments
