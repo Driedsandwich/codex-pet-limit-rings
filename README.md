@@ -28,6 +28,8 @@ The `0.5.x` downstream line keeps the original companion-app design and MIT lice
 
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
 
+Publication provenance and current release status are recorded in [PUBLICATION_RECORD.md](PUBLICATION_RECORD.md).
+
 ## Why It Works This Way
 
 The important design choice is the companion boundary. A menu item inside Codex itself would mean patching Electron app files and redoing that patch after app updates. That is brittle and hard to open source.
