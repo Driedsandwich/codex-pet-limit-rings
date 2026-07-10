@@ -1,6 +1,6 @@
 # Publication Record
 
-status: v0.5.1-macos15-candidate-in-progress
+status: v0.5.1-macos15-candidate-pr-open-ci-passed
 
 ## Source Commits
 
@@ -21,10 +21,12 @@ status: v0.5.1-macos15-candidate-in-progress
 - Upstream pull request: `https://github.com/petergpt/codex-pet-limit-rings/pull/3` (ready for review, mergeable, no upstream checks configured)
 - Downstream tag and release: `v0.5.0` at `https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.5.0`
 - Release ZIP SHA-256: `9e2190944b16c1e5d176487d60e56b76b7545b3975abd52dbea1c22a36c1d871`
-- Post-release hardening pull request: `https://github.com/Driedsandwich/codex-pet-limit-rings/pull/2` (draft, mergeable)
+- Post-release hardening pull request: `https://github.com/Driedsandwich/codex-pet-limit-rings/pull/2` (merged as `29e6a7d1d90743771ace2ea920e5d6e16ebaa999`)
 - Post-release matrix CI: push and pull-request runs passed on macOS 15 and macOS 26 (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29098720024`, `https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29098721714`)
-- Post-release hardening merge commit: `29e6a7d1d90743771ace2ea920e5d6e16ebaa999`
-- v0.5.1 compatibility candidate branch: `codex/v0.5.1-macos15-compat` (deployment target macOS 15.0; pull request and CI pending)
+- Post-release hardening main CI: passed (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29099211747`)
+- v0.5.1 compatibility candidate branch: `codex/v0.5.1-macos15-compat` at `bb902e4a77f03c7d6d84a665b1ac4c55703b84d3` (deployment target macOS 15.0)
+- v0.5.1 candidate pull request: `https://github.com/Driedsandwich/codex-pet-limit-rings/pull/3` (draft, mergeable)
+- v0.5.1 candidate matrix CI: push and pull-request runs passed source and package execution on macOS 15 and macOS 26 (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29099947097`, `https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29099971318`)
 
 ## Lane Order
 
@@ -54,4 +56,4 @@ Fork creation, both branch pushes, both pull requests, downstream merge, tag, an
 - Code signing and notarization are not part of `v0.5.0`.
 - The published v0.5.0 binary has a minimum deployment target of macOS 26.0; macOS 15 is supported through the source-build path, and a broadly compatible binary requires a future release built with an explicit deployment target.
 - Pet global-state keys remain an undocumented desktop implementation detail.
-- The v0.5.1 compatibility candidate must pass package execution on both macOS 15 and macOS 26 before merge or release.
+- The v0.5.1 compatibility candidate passes package execution on both macOS 15 and macOS 26; merge, tag, and release remain separately approved actions.
