@@ -1,6 +1,6 @@
 # Publication Record
 
-status: post-release-hardening-pr-open
+status: v0.5.1-macos15-candidate-verified
 
 ## Source Commits
 
@@ -21,8 +21,12 @@ status: post-release-hardening-pr-open
 - Upstream pull request: `https://github.com/petergpt/codex-pet-limit-rings/pull/3` (ready for review, mergeable, no upstream checks configured)
 - Downstream tag and release: `v0.5.0` at `https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.5.0`
 - Release ZIP SHA-256: `9e2190944b16c1e5d176487d60e56b76b7545b3975abd52dbea1c22a36c1d871`
-- Post-release hardening pull request: `https://github.com/Driedsandwich/codex-pet-limit-rings/pull/2` (draft, mergeable)
+- Post-release hardening pull request: `https://github.com/Driedsandwich/codex-pet-limit-rings/pull/2` (merged as `29e6a7d1d90743771ace2ea920e5d6e16ebaa999`)
 - Post-release matrix CI: push and pull-request runs passed on macOS 15 and macOS 26 (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29098720024`, `https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29098721714`)
+- Post-release hardening main CI: passed (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29099211747`)
+- v0.5.1 compatibility candidate branch: `codex/v0.5.1-macos15-compat`; verified implementation head `cb96dca7fe7720c2c6a18ec26c78f753b5eb536d` (deployment target macOS 15.0; live branch head retained by GitHub)
+- v0.5.1 candidate pull request: `https://github.com/Driedsandwich/codex-pet-limit-rings/pull/3` (candidate review and merge history retained by GitHub)
+- v0.5.1 candidate matrix CI: implementation-validation push and pull-request runs passed source and package execution on macOS 15 and macOS 26 (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29100063853`, `https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29100067189`); later PR-head status checks are retained by GitHub
 
 ## Lane Order
 
@@ -52,4 +56,4 @@ Fork creation, both branch pushes, both pull requests, downstream merge, tag, an
 - Code signing and notarization are not part of `v0.5.0`.
 - The published v0.5.0 binary has a minimum deployment target of macOS 26.0; macOS 15 is supported through the source-build path, and a broadly compatible binary requires a future release built with an explicit deployment target.
 - Pet global-state keys remain an undocumented desktop implementation detail.
-- This final record commit was made on the retained feature branch after pull request #1 merged; syncing it into `main` requires a later documentation-only pull request.
+- The v0.5.1 compatibility candidate passes package execution on both macOS 15 and macOS 26. Tag creation and GitHub Release publication remain separately approved actions.

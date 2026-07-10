@@ -24,12 +24,12 @@ Build the release candidate and checksum:
 tools/package-release.sh
 ```
 
-Inspect the generated ZIP and `.sha256` file under ignored `dist/`. Version `0.5.0` is ad-hoc signed and not notarized; the release notes must state that limitation.
+Inspect the generated ZIP and `.sha256` file under ignored `dist/`. Version `0.5.1` is ad-hoc signed and not notarized; the release notes must state that limitation. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`.
 
 The packaging command verifies its checksum before returning. To repeat that check manually, run it from `dist/` so the relative archive name resolves:
 
 ```bash
-(cd dist && shasum -a 256 -c CodexPetLimitRings-v0.5.0-macos-arm64.zip.sha256)
+(cd dist && shasum -a 256 -c CodexPetLimitRings-v0.5.1-macos-arm64.zip.sha256)
 ```
 
 ## Runtime Gate

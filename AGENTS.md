@@ -18,7 +18,8 @@ For app changes, verify:
 
 ```bash
 bash -n tools/*.sh
-swiftc -parse-as-library tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
+deployment_target="$(plutil -extract LSMinimumSystemVersion raw tools/CodexPetLimitRings-Info.plist)"
+swiftc -parse-as-library -target "arm64-apple-macosx$deployment_target" tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
 tools/test-limit-rings.sh
 tools/verify-release.sh
 tools/package-release.sh
