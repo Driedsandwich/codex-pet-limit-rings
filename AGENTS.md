@@ -22,6 +22,7 @@ swiftc -parse-as-library tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limi
 tools/test-limit-rings.sh
 tools/verify-release.sh
 tools/package-release.sh
+tools/smoke-release-artifact.sh 0.5.0
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 ```
 

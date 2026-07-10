@@ -40,7 +40,62 @@ Pet wakeups are handled by a lightweight filesystem watcher on Codex's local glo
 
 ## Quick Start
 
-Install the rings as a login item:
+### Install The Published v0.5.0 App
+
+The published v0.5.0 app bundle was built with a minimum deployment target of macOS 26. On macOS 15, use the source installation below instead; the source release gate is tested on both macOS 15 and macOS 26.
+
+Download the published app and its checksum from the [v0.5.0 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.5.0), then verify the ZIP before opening it:
+
+```bash
+version=0.5.0
+release_dir="$HOME/Downloads/CodexPetLimitRings-v$version"
+base_url="https://github.com/Driedsandwich/codex-pet-limit-rings/releases/download/v$version"
+
+mkdir -p "$release_dir"
+cd "$release_dir"
+curl --proto '=https' --tlsv1.2 -fLO "$base_url/CodexPetLimitRings-v$version-macos-arm64.zip"
+curl --proto '=https' --tlsv1.2 -fLO "$base_url/CodexPetLimitRings-v$version-macos-arm64.zip.sha256"
+shasum -a 256 -c "CodexPetLimitRings-v$version-macos-arm64.zip.sha256"
+ditto -x -k "CodexPetLimitRings-v$version-macos-arm64.zip" .
+codesign --verify --deep --strict CodexPetLimitRings.app
+```
+
+Back up an existing installation before replacing it:
+
+```bash
+backup="$HOME/Library/Application Support/CodexPetLimitRings/Backups/$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$backup" "$HOME/Applications"
+if [[ -f "$HOME/Library/LaunchAgents/com.codex-pet.limit-rings.plist" ]]; then
+  cp -a "$HOME/Library/LaunchAgents/com.codex-pet.limit-rings.plist" "$backup/com.codex-pet.limit-rings.plist"
+fi
+```
+
+Quit the running app, replace the bundle, and open the verified release:
+
+```bash
+backup="${backup:-$HOME/Library/Application Support/CodexPetLimitRings/Backups/$(date +%Y%m%d-%H%M%S)}"
+mkdir -p "$backup" "$HOME/Applications"
+pkill -TERM -f 'CodexPetLimitRings.app/Contents/MacOS/CodexPetLimitRings' >/dev/null 2>&1 || true
+if [[ -d "$HOME/Applications/CodexPetLimitRings.app" ]]; then
+  mv "$HOME/Applications/CodexPetLimitRings.app" "$backup/CodexPetLimitRings.app"
+fi
+ditto "$release_dir/CodexPetLimitRings.app" "$HOME/Applications/CodexPetLimitRings.app"
+open "$HOME/Applications/CodexPetLimitRings.app"
+```
+
+Verify the installed version and privacy-safe runtime diagnostics:
+
+```bash
+plutil -extract CFBundleShortVersionString raw \
+  "$HOME/Applications/CodexPetLimitRings.app/Contents/Info.plist"
+"$HOME/Applications/CodexPetLimitRings.app/Contents/MacOS/CodexPetLimitRings" --diagnose
+```
+
+The release bundle is ad-hoc signed and not notarized. If macOS blocks the first launch, inspect the downloaded file and approve it from System Settings only after its SHA-256 and code signature pass the checks above. To restore the prior app and LaunchAgent, follow [docs/rollback.md](docs/rollback.md) using the backup directory printed by the commands above.
+
+### Install From Source With Launch At Login
+
+Clone this repository, then install the rings and LaunchAgent from source:
 
 ```bash
 tools/install-limit-rings.sh
@@ -115,6 +170,7 @@ tools/
   test-limit-rings.sh              compile and run regression tests
   verify-release.sh                run the local and CI release gate
   package-release.sh               build a checked macOS arm64 release ZIP
+  smoke-release-artifact.sh        download and inspect a published release ZIP
 
 skills/codex-pet-limit-rings/
   SKILL.md                         Codex-agent workflow for this project
@@ -166,6 +222,18 @@ Build an ad-hoc-signed macOS arm64 ZIP and SHA-256 file under ignored `dist/`:
 
 ```bash
 tools/package-release.sh
+```
+
+Smoke-test the published release without replacing the installed app:
+
+```bash
+tools/smoke-release-artifact.sh 0.5.0
+```
+
+On an older macOS host, perform checksum, signature, architecture, version, and deployment-target inspection without launching the binary:
+
+```bash
+EXPECTED_MIN_OS=26.0 tools/smoke-release-artifact.sh 0.5.0 --inspect-only
 ```
 
 ## Experiments

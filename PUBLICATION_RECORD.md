@@ -1,6 +1,6 @@
 # Publication Record
 
-status: pull-requests-open-ci-passed
+status: post-release-hardening-pr-open
 
 ## Source Commits
 
@@ -13,12 +13,16 @@ status: pull-requests-open-ci-passed
 
 - Downstream fork: `https://github.com/Driedsandwich/codex-pet-limit-rings`
 - Upstream-fix branch: `codex/upstream-chatgpt-owner` at `853af5b28fe598ae465e4a482f0e9e9ffbbbace0`
-- Downstream verified code head: `codex/downstream-0.5.0` at `604263c16a499268c60eb9c03df94507131af5f9`
-- Downstream pull request: `https://github.com/Driedsandwich/codex-pet-limit-rings/pull/1` (draft, mergeable)
-- Downstream pull-request CI: passed (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29096488017`)
-- Downstream merge commit: pending
-- Upstream pull request: `https://github.com/petergpt/codex-pet-limit-rings/pull/3` (draft, mergeable, no upstream checks configured)
-- Downstream tag and release: pending
+- Downstream final feature head: `codex/downstream-0.5.0` at `ebef58e701326048924afa5649019c447e698efe`
+- Downstream pull request: `https://github.com/Driedsandwich/codex-pet-limit-rings/pull/1` (merged)
+- Downstream pull-request CI: passed (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29096616156`)
+- Downstream merge commit: `97d9a67a00bafae67876927cfd2ff59e3f6043d6`
+- Downstream main CI: passed (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29097404493`)
+- Upstream pull request: `https://github.com/petergpt/codex-pet-limit-rings/pull/3` (ready for review, mergeable, no upstream checks configured)
+- Downstream tag and release: `v0.5.0` at `https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.5.0`
+- Release ZIP SHA-256: `9e2190944b16c1e5d176487d60e56b76b7545b3975abd52dbea1c22a36c1d871`
+- Post-release hardening pull request: `https://github.com/Driedsandwich/codex-pet-limit-rings/pull/2` (draft, mergeable)
+- Post-release matrix CI: push and pull-request runs passed on macOS 15 and macOS 26 (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29098720024`, `https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29098721714`)
 
 ## Lane Order
 
@@ -29,21 +33,23 @@ status: pull-requests-open-ci-passed
 5. Open the isolated compatibility pull request from `Driedsandwich:codex/upstream-chatgpt-owner` to `petergpt:main`.
 6. After the downstream pull request is merged and verified, create tag and release `v0.5.0` from the verified merge commit.
 
-Fork creation, both initial branch pushes, and both draft pull requests completed on 2026-07-10. Merge, tag, and release remain separate auditable actions. Update this record with URLs and final commit identifiers after each subsequent action succeeds.
+Fork creation, both branch pushes, both pull requests, downstream merge, tag, and release completed on 2026-07-10. Upstream pull request #3 remains open for maintainer review.
 
 ## Local Evidence Before Publication
 
 - `tools/verify-release.sh`: passed for `v0.5.0`.
 - Release candidate: `CodexPetLimitRings-v0.5.0-macos-arm64.zip`.
-- Release candidate SHA-256: `ad9c51d6efabd6f4da72013bd0419ef1c6d91bd6a792fcd68abe7512bb4a543b`.
+- Final release SHA-256: `9e2190944b16c1e5d176487d60e56b76b7545b3975abd52dbea1c22a36c1d871`.
 - Installed app diagnostics: app-server ready, current ChatGPT.app CLI detected, primary and secondary limits available.
 - Runtime: LaunchAgent active, ring window aligned to the pet, error log empty.
 - Rollback: previous `0.4.0` app and LaunchAgent backed up locally.
 
 ## Known Unknowns
 
-- GitHub-hosted macOS CI passed for downstream pull request #1; the workflow reports non-failing platform migration warnings for `actions/checkout@v4` and `macos-latest`.
+- GitHub-hosted macOS CI passed for downstream pull request #1, merge commit `97d9a67`, and post-release hardening pull request #2. Pull request #2 uses `actions/checkout@v6` and explicit macOS 15/macOS 26 jobs.
 - Upstream maintainer response and merge timing are unknown.
 - The upstream repository does not currently report checks for pull request #3.
 - Code signing and notarization are not part of `v0.5.0`.
+- The published v0.5.0 binary has a minimum deployment target of macOS 26.0; macOS 15 is supported through the source-build path, and a broadly compatible binary requires a future release built with an explicit deployment target.
 - Pet global-state keys remain an undocumented desktop implementation detail.
+- This final record commit was made on the retained feature branch after pull request #1 merged; syncing it into `main` requires a later documentation-only pull request.
