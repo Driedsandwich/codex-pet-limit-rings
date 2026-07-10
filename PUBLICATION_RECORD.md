@@ -1,6 +1,6 @@
 # Publication Record
 
-status: branches-published
+status: branches-published-ci-passed
 
 ## Source Commits
 
@@ -13,8 +13,8 @@ status: branches-published
 
 - Downstream fork: `https://github.com/Driedsandwich/codex-pet-limit-rings`
 - Upstream-fix branch: `codex/upstream-chatgpt-owner` at `853af5b28fe598ae465e4a482f0e9e9ffbbbace0`
-- Downstream branch: `codex/downstream-0.5.0` at `46edab5fc322a065abaa67eeaebddc7475b8e731` before this record update
-- Downstream CI: pending
+- Downstream verified code head: `codex/downstream-0.5.0` at `604263c16a499268c60eb9c03df94507131af5f9`
+- Downstream CI: passed (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29095906141`)
 - Downstream merge commit: pending
 - Upstream pull request: pending
 - Downstream tag and release: pending
@@ -41,7 +41,7 @@ Fork creation, each push, each pull request, merge, tag, and release remain sepa
 
 ## Known Unknowns
 
-- GitHub-hosted macOS CI has not run yet.
+- GitHub-hosted macOS CI passed for verified code head `604263c16a499268c60eb9c03df94507131af5f9`; the workflow reports non-failing platform migration warnings for `actions/checkout@v4` and `macos-latest`.
 - Upstream maintainer response and merge timing are unknown.
 - Code signing and notarization are not part of `v0.5.0`.
 - Pet global-state keys remain an undocumented desktop implementation detail.
