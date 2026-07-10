@@ -4,6 +4,10 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
+No changes yet.
+
+## 0.6.0 - 2026-07-11
+
 ### Limit Intelligence & Accessibility
 
 - The menu now exposes read-only details for every rate-limit bucket, credit balance, monthly spend control, limit-reached reason, and available reset credits returned by Codex app-server.
@@ -13,9 +17,13 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 - Diagnostics now report additional-limit count, feature availability, notification opt-in, and active accessibility display preferences without exposing balances, account identifiers, or paths.
 - Release CI now smoke-tests the published v0.5.1 artifact on both macOS 15 and macOS 26.
 
+## 0.5.1 - 2026-07-11
+
 ### Compatibility
 
 - v0.5.1 source and package builds now use the `LSMinimumSystemVersion` value as an explicit Swift deployment target, producing an arm64 binary that runs on macOS 15 and newer instead of inheriting the build host's macOS 26 target.
+
+## 0.5.0 - 2026-07-10
 
 ### Added
 

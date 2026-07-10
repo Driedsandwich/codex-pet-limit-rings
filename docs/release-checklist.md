@@ -52,11 +52,11 @@ Confirm the menu-bar source is `App Server`, `Cached`, or `Local`, full limit de
 - Create the fork, push, upstream PR, and downstream release as separate operations.
 - Record the fork URL, commit/tag, CI result, PR URL/status, and known limitations.
 
-### Published v0.5.1 Evidence
+### Published v0.6.0 Evidence
 
-- Release commit: `8974665631f6ef9923ef2233bf82246e840330e3`.
-- Tag and Release: [`v0.5.1`](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.5.1).
-- Release ZIP SHA-256: `ff1081de8e1e26ede32337d4cadec8b98a7b8bcc1be87f592d28b6beb70c165d`.
+- Release commit: `e479011e7dd18da64d59f5e3417f68b4d4405ce7`.
+- Tag and Release: [`v0.6.0`](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.6.0).
+- Release ZIP SHA-256: `3230a6e83a02703bdc51f24737c5275d83baebd971abf84b7bde42ebf54764d1`.
 - Packaged architecture: Apple silicon `arm64`.
 - Packaged minimum OS: macOS `15.0` in both `LSMinimumSystemVersion` and the Mach-O build command.
 - Signing status: ad-hoc signed and not notarized.
@@ -65,7 +65,7 @@ Confirm the menu-bar source is `App Server`, `Cached`, or `Local`, full limit de
 - The published artifact smoke test passed checksum, signature, architecture, version, deployment-target, and preview-execution checks:
 
 ```bash
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.5.1
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.6.0
 ```
 
 ## Rollback

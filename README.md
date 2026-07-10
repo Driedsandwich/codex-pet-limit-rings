@@ -26,11 +26,11 @@ Because the rings are drawn in a separate transparent overlay, they do not need 
 
 ## Driedsandwich Compatibility Line
 
-The `0.5.x` downstream line keeps the original companion-app design and MIT license while focusing on compatibility with current ChatGPT/Codex desktop builds. It adds official app-server rate-limit reads, privacy-safe diagnostics, bounded fallback behavior, regression tests, and a shared local/CI release gate.
+The downstream line keeps the original companion-app design and MIT license while focusing on compatibility with current ChatGPT/Codex desktop builds. It adds official app-server rate-limit reads, privacy-safe diagnostics, bounded fallback behavior, regression tests, and a shared local/CI release gate.
 
 The published v0.5.1 release sets an explicit macOS 15.0 deployment target for both source builds and the downloadable app. It supersedes the v0.5.0 binary, which remains available for provenance but requires macOS 26.
 
-The unreleased v0.6.0 source line adds read-only limit intelligence, opt-in notifications, accessibility-aware rendering, and English/Japanese UI. It deliberately does not consume reset credits, read daily account usage, or collect per-thread usage.
+The published v0.6.0 release adds read-only limit intelligence, opt-in notifications, accessibility-aware rendering, and English/Japanese UI. It deliberately does not consume reset credits, read daily account usage, or collect per-thread usage.
 
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
 
@@ -46,15 +46,15 @@ Pet wakeups are handled by a lightweight filesystem watcher on Codex's local glo
 
 ## Quick Start
 
-### Install The Published v0.5.1 App
+### Install The Published v0.6.0 App
 
-The published v0.5.1 app supports macOS 15 and later on Apple silicon. The same source and package gates run on macOS 15 and macOS 26.
+The published v0.6.0 app supports macOS 15 and later on Apple silicon. The same source and package gates run on macOS 15 and macOS 26.
 
-Download the app and checksum from the [v0.5.1 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.5.1), then verify the ZIP before opening it. The expected ZIP SHA-256 is `ff1081de8e1e26ede32337d4cadec8b98a7b8bcc1be87f592d28b6beb70c165d`.
+Download the app and checksum from the [v0.6.0 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.6.0), then verify the ZIP before opening it. The expected ZIP SHA-256 is `3230a6e83a02703bdc51f24737c5275d83baebd971abf84b7bde42ebf54764d1`.
 
 ```bash
-version=0.5.1
-expected_sha=ff1081de8e1e26ede32337d4cadec8b98a7b8bcc1be87f592d28b6beb70c165d
+version=0.6.0
+expected_sha=3230a6e83a02703bdc51f24737c5275d83baebd971abf84b7bde42ebf54764d1
 release_dir="$HOME/Downloads/CodexPetLimitRings-v$version"
 base_url="https://github.com/Driedsandwich/codex-pet-limit-rings/releases/download/v$version"
 
@@ -71,7 +71,7 @@ codesign --verify --deep --strict CodexPetLimitRings.app
 Back up an existing installation, stop its LaunchAgent, and replace it with the verified app:
 
 ```bash
-version=0.5.1
+version=0.6.0
 release_dir="${release_dir:-$HOME/Downloads/CodexPetLimitRings-v$version}"
 backup="$HOME/Library/Application Support/CodexPetLimitRings/Backups/$(date +%Y%m%d-%H%M%S)"
 app="$HOME/Applications/CodexPetLimitRings.app"
@@ -246,13 +246,13 @@ tools/package-release.sh
 Smoke-test the published release without replacing the installed app:
 
 ```bash
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.5.1
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.6.0
 ```
 
 On an older macOS host, perform checksum, signature, architecture, version, and deployment-target inspection without launching the binary:
 
 ```bash
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.5.1 --inspect-only
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.6.0 --inspect-only
 ```
 
 ## Experiments
