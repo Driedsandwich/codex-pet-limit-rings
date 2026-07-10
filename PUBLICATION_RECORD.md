@@ -1,6 +1,6 @@
 # Publication Record
 
-status: release-published-upstream-review-open
+status: post-release-hardening-pr-open
 
 ## Source Commits
 
@@ -21,6 +21,8 @@ status: release-published-upstream-review-open
 - Upstream pull request: `https://github.com/petergpt/codex-pet-limit-rings/pull/3` (ready for review, mergeable, no upstream checks configured)
 - Downstream tag and release: `v0.5.0` at `https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.5.0`
 - Release ZIP SHA-256: `9e2190944b16c1e5d176487d60e56b76b7545b3975abd52dbea1c22a36c1d871`
+- Post-release hardening pull request: `https://github.com/Driedsandwich/codex-pet-limit-rings/pull/2` (draft, mergeable)
+- Post-release matrix CI: push and pull-request runs passed on macOS 15 and macOS 26 (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29098720024`, `https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29098721714`)
 
 ## Lane Order
 
@@ -44,7 +46,7 @@ Fork creation, both branch pushes, both pull requests, downstream merge, tag, an
 
 ## Known Unknowns
 
-- GitHub-hosted macOS CI passed for downstream pull request #1 and merge commit `97d9a67`; the workflow reports non-failing platform migration warnings for `actions/checkout@v4` and `macos-latest`.
+- GitHub-hosted macOS CI passed for downstream pull request #1, merge commit `97d9a67`, and post-release hardening pull request #2. Pull request #2 uses `actions/checkout@v6` and explicit macOS 15/macOS 26 jobs.
 - Upstream maintainer response and merge timing are unknown.
 - The upstream repository does not currently report checks for pull request #3.
 - Code signing and notarization are not part of `v0.5.0`.
