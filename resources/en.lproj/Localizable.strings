@@ -25,6 +25,9 @@
 "usage.unavailable" = "Daily usage is unavailable in this Codex version or account";
 "usage.empty" = "No daily usage is available yet";
 "usage.row" = "%@  %@  %@ tokens";
+"usage.currentStreak" = "Current streak: %@ days";
+"usage.peakDaily" = "Peak day: %@ tokens";
+"usage.lifetime" = "Lifetime: %@ tokens";
 "reached.rate" = "rate limit reached";
 "reached.ownerCredits" = "workspace credits depleted";
 "reached.memberCredits" = "member credits depleted";

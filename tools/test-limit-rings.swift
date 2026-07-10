@@ -18,6 +18,8 @@ struct LimitRingsTests {
         do {
             try testCodexCLIPathsCoverCurrentChatGPTAppAndPath()
             try testAppServerRateLimitDecode()
+            try testSparseRateLimitMergePreservesSnapshotMetadata()
+            try testReconnectBackoffIsBounded()
             try testAccountUsageDecodeAndFourteenDayNormalization()
             try testAccountUsageEmptyAndAccessibleBars()
             try testNotificationTransitionsAndDedupe()
@@ -64,17 +66,60 @@ struct LimitRingsTests {
         try expect(state.source == "app-server", "expected app-server source label")
     }
 
+    private static func testSparseRateLimitMergePreservesSnapshotMetadata() throws {
+        let original = AppServerRateLimitResult(
+            rateLimits: AppServerRateLimitSnapshot(
+                limitId: "codex",
+                limitName: "Codex",
+                primary: AppServerRateLimitWindow(usedPercent: 20, windowDurationMins: 300, resetsAt: 1000),
+                secondary: AppServerRateLimitWindow(usedPercent: 40, windowDurationMins: 10080, resetsAt: 2000),
+                credits: AppServerCreditsSnapshot(hasCredits: true, unlimited: false, balance: "10"),
+                individualLimit: nil,
+                planType: "pro",
+                rateLimitReachedType: nil
+            ),
+            rateLimitsByLimitId: nil,
+            rateLimitResetCredits: AppServerRateLimitResetCreditsSummary(availableCount: 2)
+        )
+        let merged = original.mergingSparse(AppServerRateLimitSnapshot(
+            limitId: nil,
+            limitName: nil,
+            primary: AppServerRateLimitWindow(usedPercent: 25, windowDurationMins: nil, resetsAt: nil),
+            secondary: nil,
+            credits: nil,
+            individualLimit: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        ))
+        try expect(merged.rateLimits.primary?.usedPercent == 25, "expected sparse primary percentage update")
+        try expect(merged.rateLimits.primary?.windowDurationMins == 300, "expected sparse merge to preserve window length")
+        try expect(merged.rateLimits.secondary?.usedPercent == 40, "expected sparse merge to preserve secondary window")
+        try expect(merged.rateLimits.credits?.balance == "10", "expected sparse merge to preserve nullable account metadata")
+        try expect(merged.rateLimitResetCredits?.availableCount == 2, "expected snapshot-only reset credits to remain")
+    }
+
+    private static func testReconnectBackoffIsBounded() throws {
+        try expect(appServerReconnectDelay(attempt: 0) == 1, "expected initial reconnect delay")
+        try expect(appServerReconnectDelay(attempt: 1) == 1, "expected first reconnect delay")
+        try expect(appServerReconnectDelay(attempt: 2) == 2, "expected exponential reconnect delay")
+        try expect(appServerReconnectDelay(attempt: 6) == 30, "expected reconnect delay cap")
+        try expect(appServerReconnectDelay(attempt: 20) == 30, "expected large reconnect attempts to remain capped")
+    }
+
     private static func testAccountUsageDecodeAndFourteenDayNormalization() throws {
         let buckets = (1...16).map { day in
             String(format: #"{"startDate":"2026-06-%02d","tokens":%d}"#, day, day * 100)
         }.joined(separator: ",")
-        let line = #"{"id":2,"result":{"summary":{"included":true},"dailyUsageBuckets":["# + buckets + #"]}}"#
+        let line = #"{"id":2,"result":{"summary":{"currentStreakDays":4,"lifetimeTokens":123456,"longestRunningTurnSec":90,"longestStreakDays":8,"peakDailyTokens":1600},"dailyUsageBuckets":["# + buckets + #"]}}"#
         guard let snapshot = AppServerAccountUsageReader.decodeAccountUsage(from: line) else {
             throw LimitRingsTestError.failed("expected account usage response to decode")
         }
         try expect(snapshot.buckets.count == 14, "expected only the latest fourteen daily buckets")
         try expect(snapshot.buckets.first?.startDate == "2026-06-03", "expected chronological fourteen-day window")
         try expect(snapshot.buckets.last?.tokens == 1600, "expected the newest bucket value")
+        try expect(snapshot.summary?.currentStreakDays == 4, "expected current streak summary")
+        try expect(snapshot.summary?.peakDailyTokens == 1600, "expected peak daily summary")
+        try expect(snapshot.summary?.lifetimeTokens == 123456, "expected lifetime token summary")
 
         let normalized = normalizedDailyUsageBuckets([
             DailyUsageBucket(startDate: "invalid", tokens: 1),

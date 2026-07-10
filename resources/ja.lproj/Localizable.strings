@@ -25,6 +25,9 @@
 "usage.unavailable" = "このCodexバージョンまたはアカウントでは日別使用量を取得できません";
 "usage.empty" = "表示できる日別使用量はまだありません";
 "usage.row" = "%@  %@  %@トークン";
+"usage.currentStreak" = "現在の連続利用: %@日";
+"usage.peakDaily" = "ピーク日: %@トークン";
+"usage.lifetime" = "累計: %@トークン";
 "reached.rate" = "利用上限に到達";
 "reached.ownerCredits" = "ワークスペースのクレジットを消費済み";
 "reached.memberCredits" = "メンバーのクレジットを消費済み";
