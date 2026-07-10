@@ -18,13 +18,13 @@ tools/verify-release.sh
 
 The gate must pass shell syntax, plist validation, regression tests, Swift compilation, preview rendering, credential-path checks, secret-like material checks, MIT license presence, and version consistency.
 
-Build the release candidate and checksum:
+Build the release package and checksum:
 
 ```bash
 tools/package-release.sh
 ```
 
-Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The v0.7.0 candidate is ad-hoc signed and not notarized; its eventual release notes must state that limitation. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, and confirm English and Japanese localization resources are present.
+Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The published v0.7.0 package is ad-hoc signed and not notarized. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, and confirm English and Japanese localization resources are present.
 
 The packaging command verifies its checksum before returning. To repeat that check manually, run it from `dist/` so the relative archive name resolves:
 
@@ -34,7 +34,7 @@ The packaging command verifies its checksum before returning. To repeat that che
 
 ## Runtime Gate
 
-After installing a release candidate, verify:
+After installing the published release, verify:
 
 ```bash
 pgrep -fl CodexPetLimitRings
@@ -51,6 +51,21 @@ Confirm the menu-bar source is `App Server`, `Cached`, or `Local`, full limit de
 - Confirm no local paths, logs, state files, screenshots with private content, or `tmp/` artifacts are included.
 - Create the fork, push, upstream PR, and downstream release as separate operations.
 - Record the fork URL, commit/tag, CI result, PR URL/status, and known limitations.
+
+### Published v0.7.0 Evidence
+
+- Release commit and target: `4929225a494e3f9f83ad138a54a9c663111cefea`.
+- Tag and Release: [`v0.7.0`](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.7.0).
+- Release ZIP SHA-256: `70d56a43ea95b6dbc4b594d0d0695c2f6eb874e145aabd0496341bc60fd606cf`.
+- Packaged architecture: Apple silicon `arm64`.
+- Packaged minimum OS: macOS `15.0` in both `LSMinimumSystemVersion` and the Mach-O build command.
+- Signing status: ad-hoc signed and not notarized.
+- Merge-commit CI passed on macOS 15 and macOS 26 (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29122478649`).
+- The published artifact smoke test passed checksum, signature, architecture, version, deployment-target, preview-execution, and privacy-safe diagnostic checks:
+
+```bash
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.7.0
+```
 
 ### Published v0.6.0 Evidence
 
