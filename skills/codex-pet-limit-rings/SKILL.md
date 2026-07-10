@@ -89,7 +89,7 @@ deployment_target="$(plutil -extract LSMinimumSystemVersion raw tools/CodexPetLi
 swiftc -parse-as-library -target "arm64-apple-macosx$deployment_target" tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -framework UserNotifications -lsqlite3
 tools/test-limit-rings.sh
 tools/verify-release.sh
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.7.0
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.8.0
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 ```
 
