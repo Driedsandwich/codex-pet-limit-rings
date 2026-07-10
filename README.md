@@ -26,6 +26,8 @@ Because the rings are drawn in a separate transparent overlay, they do not need 
 
 The `0.5.x` downstream line keeps the original companion-app design and MIT license while focusing on compatibility with current ChatGPT/Codex desktop builds. It adds official app-server rate-limit reads, privacy-safe diagnostics, bounded fallback behavior, regression tests, and a shared local/CI release gate.
 
+The v0.5.1 compatibility candidate sets an explicit macOS 15.0 deployment target for source builds and packaged binaries. Until v0.5.1 is published, the existing v0.5.0 download still requires macOS 26 and macOS 15 users should install from source.
+
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
 
 Publication provenance and current release status are recorded in [PUBLICATION_RECORD.md](PUBLICATION_RECORD.md).
@@ -196,7 +198,8 @@ tools/build-limit-rings.sh
 Render a static preview PNG:
 
 ```bash
-swiftc -parse-as-library tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
+deployment_target="$(plutil -extract LSMinimumSystemVersion raw tools/CodexPetLimitRings-Info.plist)"
+swiftc -parse-as-library -target "arm64-apple-macosx$deployment_target" tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 ```
 

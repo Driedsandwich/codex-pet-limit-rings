@@ -4,6 +4,10 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
+### Compatibility
+
+- v0.5.1 source and package builds now use the `LSMinimumSystemVersion` value as an explicit Swift deployment target, producing an arm64 binary that runs on macOS 15 and newer instead of inheriting the build host's macOS 26 target.
+
 ### Added
 
 - Hover readouts now show a subtle reset countdown beneath the remaining percentage when reset data is available.

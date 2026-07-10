@@ -61,7 +61,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "0.5.0"
+    var version = "0.5.1"
 }
 
 private struct AppServerInitializedNotification: Encodable {
