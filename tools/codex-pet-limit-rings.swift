@@ -60,6 +60,7 @@ struct LimitState {
 private let limitStatePollInterval: TimeInterval = 20.0
 private let dailyUsageRefreshInterval: TimeInterval = 15 * 60
 private let dailyUsageDisplayCount = 14
+private let appServerReconnectMaximumDelay: TimeInterval = 30
 private let petFrameFallbackPollInterval: TimeInterval = 2.0
 private let petFrameStateDebounceInterval: TimeInterval = 0.035
 private let dragFollowInterval: TimeInterval = 1.0 / 60.0
@@ -153,7 +154,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "0.7.0"
+    var version = "0.8.0"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -186,6 +187,7 @@ struct DailyUsageBucket: Decodable, Equatable {
 
 private struct AppServerAccountUsageResult: Decodable {
     var dailyUsageBuckets: [DailyUsageBucket]?
+    var summary: DailyUsageSummary?
 }
 
 private struct AppServerAccountUsageReadResponse: Decodable {
@@ -195,7 +197,21 @@ private struct AppServerAccountUsageReadResponse: Decodable {
 
 struct DailyUsageSnapshot {
     var buckets: [DailyUsageBucket]
+    var summary: DailyUsageSummary?
     var observedAt: Date
+}
+
+struct DailyUsageSummary: Decodable, Equatable {
+    var currentStreakDays: Int64?
+    var lifetimeTokens: Int64?
+    var longestRunningTurnSec: Int64?
+    var longestStreakDays: Int64?
+    var peakDailyTokens: Int64?
+}
+
+func appServerReconnectDelay(attempt: Int) -> TimeInterval {
+    guard attempt > 0 else { return 1 }
+    return min(pow(2, Double(attempt - 1)), appServerReconnectMaximumDelay)
 }
 
 func normalizedDailyUsageBuckets(_ buckets: [DailyUsageBucket], limit: Int = dailyUsageDisplayCount) -> [DailyUsageBucket] {
@@ -228,6 +244,18 @@ struct AppServerRateLimitResult: Decodable {
     var rateLimits: AppServerRateLimitSnapshot
     var rateLimitsByLimitId: [String: AppServerRateLimitSnapshot]?
     var rateLimitResetCredits: AppServerRateLimitResetCreditsSummary?
+
+    func mergingSparse(_ update: AppServerRateLimitSnapshot) -> AppServerRateLimitResult {
+        var merged = self
+        merged.rateLimits = rateLimits.mergingSparse(update)
+        if rateLimitsByLimitId != nil {
+            let updateID = update.limitId ?? rateLimits.limitId ?? "codex"
+            var byID = merged.rateLimitsByLimitId ?? [:]
+            byID[updateID] = (byID[updateID] ?? rateLimits).mergingSparse(update)
+            merged.rateLimitsByLimitId = byID
+        }
+        return merged
+    }
 
     func toLimitState(observedAt: Date) -> LimitState? {
         let selected = rateLimitsByLimitId?["codex"] ?? rateLimits
@@ -277,6 +305,19 @@ struct AppServerRateLimitSnapshot: Decodable {
     var planType: String?
     var rateLimitReachedType: String?
 
+    func mergingSparse(_ update: AppServerRateLimitSnapshot) -> AppServerRateLimitSnapshot {
+        AppServerRateLimitSnapshot(
+            limitId: update.limitId ?? limitId,
+            limitName: update.limitName ?? limitName,
+            primary: primary?.mergingSparse(update.primary) ?? update.primary,
+            secondary: secondary?.mergingSparse(update.secondary) ?? update.secondary,
+            credits: update.credits ?? credits,
+            individualLimit: update.individualLimit ?? individualLimit,
+            planType: update.planType ?? planType,
+            rateLimitReachedType: update.rateLimitReachedType ?? rateLimitReachedType
+        )
+    }
+
     func toAdditionalLimit(defaultID: String) -> AdditionalLimit {
         AdditionalLimit(
             id: limitId ?? defaultID,
@@ -319,6 +360,15 @@ struct AppServerRateLimitWindow: Decodable {
     var usedPercent: Double?
     var windowDurationMins: Double?
     var resetsAt: Double?
+
+    func mergingSparse(_ update: AppServerRateLimitWindow?) -> AppServerRateLimitWindow {
+        guard let update else { return self }
+        return AppServerRateLimitWindow(
+            usedPercent: update.usedPercent ?? usedPercent,
+            windowDurationMins: update.windowDurationMins ?? windowDurationMins,
+            resetsAt: update.resetsAt ?? resetsAt
+        )
+    }
 
     func toBucket() -> LimitBucket? {
         guard let used = usedPercent else { return nil }
@@ -620,6 +670,7 @@ final class AppServerAccountUsageReader {
         }
         return DailyUsageSnapshot(
             buckets: normalizedDailyUsageBuckets(result.dailyUsageBuckets ?? []),
+            summary: result.summary,
             observedAt: Date()
         )
     }
@@ -655,6 +706,297 @@ final class AppServerAccountUsageReader {
             return nil
         }
         return response.id
+    }
+}
+
+private struct AppServerMethodEnvelope: Decodable {
+    var method: String?
+}
+
+private struct AppServerRateLimitsUpdatedNotification: Decodable {
+    struct Params: Decodable {
+        var rateLimits: AppServerRateLimitSnapshot
+    }
+
+    var method: String
+    var params: Params
+}
+
+final class AppServerLiveClient {
+    typealias RateLimitHandler = (LimitState) -> Void
+    typealias UsageHandler = (DailyUsageSnapshot?, String?) -> Void
+    typealias ConnectionHandler = (Bool, String?) -> Void
+
+    private let codexHome: URL
+    private let queue = DispatchQueue(label: "codex-pet-limit-rings.app-server-live")
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+    private var process: Process?
+    private var stdin: Pipe?
+    private var stdout: Pipe?
+    private var stderr: Pipe?
+    private var buffer = ""
+    private var rateLimitResult: AppServerRateLimitResult?
+    private var reconnectAttempt = 0
+    private var connectionGeneration = 0
+    private var ready = false
+    private var stopped = true
+
+    var onRateLimitState: RateLimitHandler?
+    var onUsage: UsageHandler?
+    var onConnectionChanged: ConnectionHandler?
+
+    init(codexHome: URL) {
+        self.codexHome = codexHome
+    }
+
+    func start() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.stopped = false
+            self.startConnection()
+        }
+    }
+
+    func stop() {
+        queue.sync {
+            stopped = true
+            connectionGeneration += 1
+            closeCurrentProcess()
+        }
+    }
+
+    func requestRateLimits() {
+        queue.async { [weak self] in
+            self?.sendRateLimitRequest()
+        }
+    }
+
+    func requestUsage() {
+        queue.async { [weak self] in
+            self?.sendUsageRequest()
+        }
+    }
+
+    private func startConnection() {
+        guard !stopped, process == nil else { return }
+        guard let codexCLI = findCodexCLI() else {
+            reportDisconnected("cli_not_found")
+            scheduleReconnect()
+            return
+        }
+
+        connectionGeneration += 1
+        let generation = connectionGeneration
+        ready = false
+        buffer = ""
+
+        let newProcess = Process()
+        newProcess.executableURL = codexCLI
+        newProcess.arguments = ["app-server", "--stdio"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["CODEX_HOME"] = codexHome.path
+        newProcess.environment = environment
+
+        let newStdin = Pipe()
+        let newStdout = Pipe()
+        let newStderr = Pipe()
+        newProcess.standardInput = newStdin
+        newProcess.standardOutput = newStdout
+        newProcess.standardError = newStderr
+        process = newProcess
+        stdin = newStdin
+        stdout = newStdout
+        stderr = newStderr
+
+        newStdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else { return }
+            self?.queue.async {
+                self?.consume(chunk: chunk, generation: generation)
+            }
+        }
+        newStderr.fileHandleForReading.readabilityHandler = { handle in
+            _ = handle.availableData
+        }
+        newProcess.terminationHandler = { [weak self] _ in
+            self?.queue.async {
+                self?.handleTermination(generation: generation)
+            }
+        }
+
+        do {
+            try newProcess.run()
+            try write(AppServerInitializeRequest())
+        } catch {
+            closeCurrentProcess()
+            reportDisconnected("launch_failed")
+            scheduleReconnect()
+            return
+        }
+
+        queue.asyncAfter(deadline: .now() + appServerLimitStateTimeout) { [weak self] in
+            guard let self, generation == self.connectionGeneration, !self.ready, !self.stopped else { return }
+            self.closeCurrentProcess()
+            self.reportDisconnected("initialize_timeout")
+            self.scheduleReconnect()
+        }
+    }
+
+    private func consume(chunk: String, generation: Int) {
+        guard generation == connectionGeneration, !stopped else { return }
+        buffer += chunk
+        for line in Self.drainLines(from: &buffer) {
+            handle(line: line)
+        }
+    }
+
+    private func handle(line: String) {
+        guard let data = line.data(using: .utf8) else { return }
+        if let envelope = try? decoder.decode(AppServerMethodEnvelope.self, from: data),
+           envelope.method == "account/rateLimits/updated",
+           let notification = try? decoder.decode(AppServerRateLimitsUpdatedNotification.self, from: data),
+           let current = rateLimitResult {
+            let merged = current.mergingSparse(notification.params.rateLimits)
+            rateLimitResult = merged
+            if let state = merged.toLimitState(observedAt: Date()) {
+                onRateLimitState?(state)
+            }
+            return
+        }
+
+        guard let response = try? decoder.decode(AppServerResponseID.self, from: data),
+              let responseID = response.id else { return }
+        switch responseID {
+        case 1:
+            do {
+                try write(AppServerInitializedNotification())
+                sendRateLimitRequest()
+                sendUsageRequest()
+            } catch {
+                failConnection("request_write_failed")
+            }
+        case 2:
+            guard let decoded = try? decoder.decode(AppServerRateLimitReadResponse.self, from: data),
+                  let result = decoded.result,
+                  let state = result.toLimitState(observedAt: Date()) else {
+                failConnection("invalid_rate_limit_response")
+                return
+            }
+            rateLimitResult = result
+            ready = true
+            reconnectAttempt = 0
+            onConnectionChanged?(true, nil)
+            onRateLimitState?(state)
+        case 3:
+            guard let decoded = try? decoder.decode(AppServerAccountUsageReadResponse.self, from: data),
+                  let result = decoded.result else {
+                onUsage?(nil, "invalid_account_usage_response")
+                return
+            }
+            onUsage?(
+                DailyUsageSnapshot(
+                    buckets: normalizedDailyUsageBuckets(result.dailyUsageBuckets ?? []),
+                    summary: result.summary,
+                    observedAt: Date()
+                ),
+                nil
+            )
+        default:
+            break
+        }
+    }
+
+    private func sendRateLimitRequest() {
+        guard process?.isRunning == true else { return }
+        do {
+            try write(AppServerRateLimitReadRequest())
+        } catch {
+            failConnection("rate_limit_write_failed")
+        }
+    }
+
+    private func sendUsageRequest() {
+        guard process?.isRunning == true else {
+            onUsage?(nil, "app_server_disconnected")
+            return
+        }
+        do {
+            try write(AppServerAccountUsageReadRequest(id: 3))
+        } catch {
+            onUsage?(nil, "account_usage_write_failed")
+            failConnection("account_usage_write_failed")
+        }
+    }
+
+    private func failConnection(_ errorCode: String) {
+        closeCurrentProcess()
+        reportDisconnected(errorCode)
+        scheduleReconnect()
+    }
+
+    private func handleTermination(generation: Int) {
+        guard generation == connectionGeneration, !stopped, process != nil else { return }
+        closeCurrentProcess()
+        reportDisconnected(ready ? "app_server_terminated" : "initialize_failed")
+        scheduleReconnect()
+    }
+
+    private func reportDisconnected(_ errorCode: String) {
+        ready = false
+        onConnectionChanged?(false, errorCode)
+    }
+
+    private func scheduleReconnect() {
+        guard !stopped else { return }
+        reconnectAttempt += 1
+        let delay = appServerReconnectDelay(attempt: reconnectAttempt)
+        let generation = connectionGeneration
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.stopped, generation == self.connectionGeneration else { return }
+            self.startConnection()
+        }
+    }
+
+    private func closeCurrentProcess() {
+        stdout?.fileHandleForReading.readabilityHandler = nil
+        stderr?.fileHandleForReading.readabilityHandler = nil
+        stdin?.fileHandleForWriting.closeFile()
+        if process?.isRunning == true {
+            process?.terminate()
+        }
+        process = nil
+        stdin = nil
+        stdout = nil
+        stderr = nil
+    }
+
+    private func write<T: Encodable>(_ payload: T) throws {
+        guard let handle = stdin?.fileHandleForWriting else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        var data = try encoder.encode(payload)
+        data.append(0x0a)
+        handle.write(data)
+    }
+
+    private func findCodexCLI() -> URL? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let environment = ProcessInfo.processInfo.environment
+        var seen = Set<String>()
+        return defaultCodexCLIPaths(home: home, environment: environment)
+            .filter { seen.insert($0).inserted }
+            .map { URL(fileURLWithPath: $0) }
+            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
+
+    private static func drainLines(from buffer: inout String) -> [String] {
+        var lines: [String] = []
+        while let newline = buffer.firstIndex(of: "\n") {
+            lines.append(String(buffer[..<newline]))
+            buffer.removeSubrange(buffer.startIndex...newline)
+        }
+        return lines
     }
 }
 
@@ -1436,7 +1778,7 @@ final class LimitRingView: NSView {
 final class LimitRingsApp: NSObject {
     private let config: LimitRingsConfig
     private let stateReader: LimitStateReader
-    private let usageReader: AppServerAccountUsageReader
+    private let liveClient: AppServerLiveClient
     private let frameReader: PetFrameReader
     private let panel: NSPanel
     private let ringView: LimitRingView
@@ -1472,16 +1814,14 @@ final class LimitRingsApp: NSObject {
     private var notificationBands: [String: Int]
     private var stateReadInFlight = false
     private var usageReadInFlight = false
+    private var appServerConnected = false
     private var dailyUsageSnapshot: DailyUsageSnapshot?
     private var dailyUsageErrorCode: String?
 
     init(config: LimitRingsConfig) {
         self.config = config
-        self.stateReader = LimitStateReader(
-            logsPath: config.logsPath,
-            codexHome: config.codexHome
-        )
-        self.usageReader = AppServerAccountUsageReader(codexHome: config.codexHome)
+        self.stateReader = LimitStateReader(logsPath: config.logsPath)
+        self.liveClient = AppServerLiveClient(codexHome: config.codexHome)
         self.frameReader = PetFrameReader(globalStatePath: config.globalStatePath)
         self.ringView = LimitRingView(frame: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)))
         self.ringsVisible = UserDefaults.standard.object(forKey: ringsVisibleDefaultsKey) as? Bool ?? true
@@ -1505,6 +1845,7 @@ final class LimitRingsApp: NSObject {
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         super.init()
+        configureLiveClient()
     }
 
     deinit {
@@ -1516,6 +1857,7 @@ final class LimitRingsApp: NSObject {
         pendingGlobalStateWatcherRestart?.cancel()
         pendingFrameUpdate?.cancel()
         globalStateSource?.cancel()
+        liveClient.stop()
         [mouseDownMonitor, mouseDragMonitor, mouseUpMonitor, mouseMoveMonitor].compactMap { $0 }.forEach {
             NSEvent.removeMonitor($0)
         }
@@ -1524,16 +1866,19 @@ final class LimitRingsApp: NSObject {
     func run() {
         installStatusMenu()
         updateState()
-        updateDailyUsage()
+        usageReadInFlight = true
+        updateDailyUsageMenu()
+        liveClient.start()
         updateFrame()
         installGlobalStateWatcher()
         updateRingVisibility()
 
         stateTimer = Timer.scheduledTimer(withTimeInterval: limitStatePollInterval, repeats: true) { [weak self] _ in
-            self?.updateState()
+            guard let self, !self.appServerConnected else { return }
+            self.updateState()
         }
         usageTimer = Timer.scheduledTimer(withTimeInterval: dailyUsageRefreshInterval, repeats: true) { [weak self] _ in
-            self?.updateDailyUsage()
+            self?.requestDailyUsage()
         }
         frameTimer = Timer.scheduledTimer(withTimeInterval: petFrameFallbackPollInterval, repeats: true) { [weak self] _ in
             self?.updateFrame()
@@ -1552,29 +1897,58 @@ final class LimitRingsApp: NSObject {
             guard let self else { return }
             let state = self.stateReader.readLatest()
             DispatchQueue.main.async {
-                self.ringView.state = state
-                self.updateSummaryMenuItem()
-                self.updateLimitDetailsMenu()
-                self.processNotifications(for: state)
+                self.applyLimitState(state)
                 self.stateReadInFlight = false
             }
         }
     }
 
-    private func updateDailyUsage() {
-        guard !usageReadInFlight else { return }
-        usageReadInFlight = true
-        updateDailyUsageMenu()
-        stateQueue.async { [weak self] in
-            guard let self else { return }
-            let result = self.usageReader.readLatest()
+    private func configureLiveClient() {
+        liveClient.onConnectionChanged = { [weak self] connected, errorCode in
             DispatchQueue.main.async {
-                self.dailyUsageSnapshot = result.snapshot
-                self.dailyUsageErrorCode = result.errorCode
+                guard let self else { return }
+                self.appServerConnected = connected
+                if !connected {
+                    if self.dailyUsageSnapshot == nil {
+                        self.dailyUsageErrorCode = errorCode
+                        self.usageReadInFlight = false
+                        self.updateDailyUsageMenu()
+                    }
+                    self.updateState()
+                }
+            }
+        }
+        liveClient.onRateLimitState = { [weak self] state in
+            DispatchQueue.main.async {
+                self?.applyLimitState(state)
+            }
+        }
+        liveClient.onUsage = { [weak self] snapshot, errorCode in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let snapshot {
+                    self.dailyUsageSnapshot = snapshot
+                    self.dailyUsageErrorCode = nil
+                } else if self.dailyUsageSnapshot == nil {
+                    self.dailyUsageErrorCode = errorCode
+                }
                 self.usageReadInFlight = false
                 self.updateDailyUsageMenu()
             }
         }
+    }
+
+    private func applyLimitState(_ state: LimitState) {
+        ringView.state = state
+        updateSummaryMenuItem()
+        updateLimitDetailsMenu()
+        processNotifications(for: state)
+    }
+
+    private func requestDailyUsage() {
+        usageReadInFlight = true
+        updateDailyUsageMenu()
+        liveClient.requestUsage()
     }
 
     private func installGlobalStateWatcher() {
@@ -1884,18 +2258,44 @@ final class LimitRingsApp: NSObject {
             rows = [localized("usage.loading", fallback: "Loading daily usage…")]
         } else if dailyUsageErrorCode != nil {
             rows = [localized("usage.unavailable", fallback: "Daily usage is unavailable in this Codex version or account")]
-        } else if let buckets = dailyUsageSnapshot?.buckets, buckets.isEmpty {
+        } else if let snapshot = dailyUsageSnapshot,
+                  snapshot.buckets.isEmpty,
+                  snapshot.summary == nil {
             rows = [localized("usage.empty", fallback: "No daily usage is available yet")]
-        } else if let buckets = dailyUsageSnapshot?.buckets {
+        } else if let snapshot = dailyUsageSnapshot {
+            let buckets = snapshot.buckets
             let maximum = buckets.map(\.tokens).max() ?? 0
-            rows = buckets.reversed().map { bucket in
+            var usageRows: [String] = []
+            if let streak = snapshot.summary?.currentStreakDays {
+                usageRows.append(String(
+                    format: localized("usage.currentStreak", fallback: "Current streak: %@ days"),
+                    localizedInteger(streak)
+                ))
+            }
+            if let peak = snapshot.summary?.peakDailyTokens {
+                usageRows.append(String(
+                    format: localized("usage.peakDaily", fallback: "Peak day: %@ tokens"),
+                    localizedInteger(peak)
+                ))
+            }
+            if let lifetime = snapshot.summary?.lifetimeTokens {
+                usageRows.append(String(
+                    format: localized("usage.lifetime", fallback: "Lifetime: %@ tokens"),
+                    localizedInteger(lifetime)
+                ))
+            }
+            if !usageRows.isEmpty, !buckets.isEmpty {
+                usageRows.append("──────────")
+            }
+            usageRows.append(contentsOf: buckets.reversed().map { bucket in
                 String(
                     format: localized("usage.row", fallback: "%@  %@  %@ tokens"),
                     localizedDailyUsageDate(bucket.startDate),
                     dailyUsageBar(tokens: bucket.tokens, maximum: maximum),
                     localizedInteger(bucket.tokens)
                 )
-            }
+            })
+            rows = usageRows.isEmpty ? [localized("usage.empty", fallback: "No daily usage is available yet")] : usageRows
         } else {
             rows = [localized("usage.loading", fallback: "Loading daily usage…")]
         }
@@ -2087,8 +2487,12 @@ final class LimitRingsApp: NSObject {
     }
 
     @objc private func refreshNow(_ sender: NSMenuItem) {
-        updateState()
-        updateDailyUsage()
+        if appServerConnected {
+            liveClient.requestRateLimits()
+        } else {
+            updateState()
+        }
+        requestDailyUsage()
         updateFrame()
         updateRingVisibility()
     }
@@ -2545,6 +2949,7 @@ private struct CompatibilityDiagnostics: Encodable {
     var resetCreditsAvailable: Int64?
     var dailyUsageAvailable: Bool
     var dailyUsageBucketCount: Int
+    var usageSummaryAvailable: Bool
     var notificationsEnabled: Bool
     var reduceMotion: Bool
     var increaseContrast: Bool
@@ -2586,6 +2991,7 @@ func runDiagnostics(config: LimitRingsConfig) -> Bool {
         resetCreditsAvailable: probe.state?.resetCreditsAvailable,
         dailyUsageAvailable: usageProbe.snapshot != nil,
         dailyUsageBucketCount: usageProbe.snapshot?.buckets.count ?? 0,
+        usageSummaryAvailable: usageProbe.snapshot?.summary != nil,
         notificationsEnabled: UserDefaults.standard.bool(forKey: notificationsEnabledDefaultsKey),
         reduceMotion: accessibility.reduceMotion,
         increaseContrast: accessibility.increaseContrast,

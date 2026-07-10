@@ -42,6 +42,14 @@ The first downstream parent commit changes live pet-window matching from the vis
 - Provide loading, empty, and unsupported states without adding permissions.
 - Exclude `thread/tokenUsage/updated`, thread resume/fork, thread identifiers, transcript or SQLite/JSONL usage parsing, durable usage storage, usage notifications, experimental APIs, and account mutation.
 
+## v0.8.0 Live Limit Updates & Usage Summary
+
+- Keep one long-lived stable stdio app-server connection and apply sparse `account/rateLimits/updated` notifications to the latest full snapshot.
+- Use bounded exponential reconnect delays and retain the local 20-second poll only as a disconnected fallback.
+- Read daily buckets and aggregate usage summary fields through the same connection every 15 minutes, retaining them in memory only.
+- Display current streak, peak daily tokens, and lifetime tokens in English and Japanese without adding notification or storage permissions.
+- Continue excluding thread events and identifiers, resume/fork, reset-credit consumption, experimental APIs, and account mutation.
+
 ## Known Compatibility Risks
 
 - The Codex app-server command is still labeled experimental even though the rate-limit methods used here are present in its stable generated schema.

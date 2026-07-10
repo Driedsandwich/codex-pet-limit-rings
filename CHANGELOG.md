@@ -14,7 +14,14 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
-No changes yet.
+### Live Limit Updates & Usage Summary
+
+- Keep one long-lived app-server stdio connection for rate-limit and account-usage reads.
+- Apply sparse `account/rateLimits/updated` notifications without clearing nullable metadata from the latest full snapshot.
+- Reconnect with bounded exponential backoff and use the 20-second local fallback poll only while disconnected.
+- Show current streak, peak daily tokens, and lifetime tokens from the read-only account-usage summary.
+- Continue excluding thread identifiers, thread resume/fork, durable usage storage, reset consumption, and experimental API methods.
+- Release CI now smoke-tests the published v0.7.0 artifact on macOS 15 and macOS 26.
 
 ## 0.6.0 - 2026-07-11
 
