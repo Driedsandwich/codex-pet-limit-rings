@@ -24,8 +24,18 @@ launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.codex-pet.limit
 pkill -TERM -f 'CodexPetLimitRings.app/Contents/MacOS/CodexPetLimitRings' >/dev/null 2>&1 || true
 cp -a "$backup/CodexPetLimitRings.app" "$HOME/Applications/CodexPetLimitRings.app"
 cp -a "$backup/com.codex-pet.limit-rings.plist" "$HOME/Library/LaunchAgents/com.codex-pet.limit-rings.plist"
+if [[ -f "$backup/preferences.plist" ]]; then
+  defaults import local.codex.pet-limit-rings "$backup/preferences.plist"
+fi
 launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.codex-pet.limit-rings.plist"
 launchctl kickstart -k "gui/$(id -u)/com.codex-pet.limit-rings"
+```
+
+When rolling back from v0.6.0 to an older release, clear the v0.6.0-only notification preferences so a later reinstall still starts opt-in:
+
+```bash
+defaults delete local.codex.pet-limit-rings CodexPetLimitRings.notificationsEnabled >/dev/null 2>&1 || true
+defaults delete local.codex.pet-limit-rings CodexPetLimitRings.notificationBands >/dev/null 2>&1 || true
 ```
 
 ## Verify The Restore

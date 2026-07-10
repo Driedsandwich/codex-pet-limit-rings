@@ -4,6 +4,15 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
+### Limit Intelligence & Accessibility
+
+- The menu now exposes read-only details for every rate-limit bucket, credit balance, monthly spend control, limit-reached reason, and available reset credits returned by Codex app-server.
+- Optional local notifications cover 25% remaining, 10% remaining, and recovery. Notifications default to off, request permission only when enabled, and ignore cached or local fallback values.
+- Reduced Motion removes animated pulse and glint effects. Increase Contrast and Differentiate Without Color receive stronger tracks, dashed secondary arcs, and alternate additional-limit markers.
+- Menu and notification text are localized in English and Japanese.
+- Diagnostics now report additional-limit count, feature availability, notification opt-in, and active accessibility display preferences without exposing balances, account identifiers, or paths.
+- Release CI now smoke-tests the published v0.5.1 artifact on both macOS 15 and macOS 26.
+
 ### Compatibility
 
 - v0.5.1 source and package builds now use the `LSMinimumSystemVersion` value as an explicit Swift deployment target, producing an arm64 binary that runs on macOS 15 and newer instead of inheriting the build host's macOS 26 target.

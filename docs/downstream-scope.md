@@ -27,6 +27,14 @@ The first downstream parent commit changes live pet-window matching from the vis
 - No bundled credentials, API keys, screenshots with private content, or local Codex data.
 - No automatic updater, code signing, notarization, Windows port, or per-turn usage overlay in 0.5.x.
 
+## v0.6.0 Read-Only Expansion
+
+- Decode and display full multi-bucket rate-limit snapshots, credits, individual monthly limits, reached reasons, and reset-credit availability.
+- Keep notification permission opt-in and threshold notifications local to the Mac.
+- Honor macOS accessibility display preferences and bundle English/Japanese UI resources.
+- Do not consume reset credits or add any other account mutation.
+- Defer `account/usage/read` and `thread/tokenUsage/updated` to a later persistent app-server client design.
+
 ## Known Compatibility Risks
 
 - The Codex app-server command is still labeled experimental even though the rate-limit methods used here are present in its stable generated schema.
