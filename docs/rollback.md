@@ -38,6 +38,8 @@ defaults delete local.codex.pet-limit-rings CodexPetLimitRings.notificationsEnab
 defaults delete local.codex.pet-limit-rings CodexPetLimitRings.notificationBands >/dev/null 2>&1 || true
 ```
 
+The v0.7.0 daily usage view is memory-only, so rollback requires no usage database, JSONL, preference, or cache cleanup.
+
 ## Verify The Restore
 
 ```bash

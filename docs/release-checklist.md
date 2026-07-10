@@ -24,12 +24,12 @@ Build the release candidate and checksum:
 tools/package-release.sh
 ```
 
-Inspect the generated ZIP and `.sha256` file under ignored `dist/`. Version `0.6.0` is ad-hoc signed and not notarized; the release notes must state that limitation. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, and confirm English and Japanese localization resources are present.
+Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The v0.7.0 candidate is ad-hoc signed and not notarized; its eventual release notes must state that limitation. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, and confirm English and Japanese localization resources are present.
 
 The packaging command verifies its checksum before returning. To repeat that check manually, run it from `dist/` so the relative archive name resolves:
 
 ```bash
-(cd dist && shasum -a 256 -c CodexPetLimitRings-v0.6.0-macos-arm64.zip.sha256)
+(cd dist && shasum -a 256 -c CodexPetLimitRings-v0.7.0-macos-arm64.zip.sha256)
 ```
 
 ## Runtime Gate
@@ -42,7 +42,7 @@ launchctl print "gui/$(id -u)/com.codex-pet.limit-rings" >/dev/null
 "$HOME/Applications/CodexPetLimitRings.app/Contents/MacOS/CodexPetLimitRings" --diagnose
 ```
 
-Confirm the menu-bar source is `App Server`, `Cached`, or `Local`, full limit details are read-only, notifications are off by default, the ring remains centered on the pet, and the error log is empty.
+Confirm the menu-bar source is `App Server`, `Cached`, or `Local`, full limit details are read-only, Daily Usage shows a graph or explicit empty/unsupported state, notifications are off by default, the ring remains centered on the pet, and the error log is empty.
 
 ## Publication Gate
 

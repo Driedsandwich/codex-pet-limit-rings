@@ -17,6 +17,7 @@ The rings are designed to be glanceable:
 - Color moves from calm green/blue to amber and red as capacity gets low.
 - Hovering over the pet or rings shows the exact percentages at the current ring endpoints.
 - A small menu-bar icon exposes all available limit buckets, credits, monthly spend controls, reset credits, and limit status without modifying the account.
+- A Daily Usage submenu shows the latest 14 account-usage days as text-labelled bars and refreshes every 15 minutes without storing usage history.
 - Optional 25%, 10%, and recovery notifications are off by default and request macOS permission only when enabled.
 - Reduced Motion, Increase Contrast, Differentiate Without Color, English, and Japanese are supported.
 
@@ -31,6 +32,8 @@ The downstream line keeps the original companion-app design and MIT license whil
 The published v0.5.1 release sets an explicit macOS 15.0 deployment target for both source builds and the downloadable app. It supersedes the v0.5.0 binary, which remains available for provenance but requires macOS 26.
 
 The published v0.6.0 release adds read-only limit intelligence, opt-in notifications, accessibility-aware rendering, and English/Japanese UI. It deliberately does not consume reset credits, read daily account usage, or collect per-thread usage.
+
+The unreleased v0.7.0 candidate adds memory-only Daily Usage Insights through stable app-server `account/usage/read`. It does not collect per-thread usage, inspect transcripts, store usage history, or mutate the account.
 
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
 

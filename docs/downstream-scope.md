@@ -33,7 +33,14 @@ The first downstream parent commit changes live pet-window matching from the vis
 - Keep notification permission opt-in and threshold notifications local to the Mac.
 - Honor macOS accessibility display preferences and bundle English/Japanese UI resources.
 - Do not consume reset credits or add any other account mutation.
-- Defer `account/usage/read` and `thread/tokenUsage/updated` to a later persistent app-server client design.
+- Defer daily and per-thread usage to a later, separately bounded design.
+
+## v0.7.0 Daily Usage Insights
+
+- Read stable `account/usage/read` through a short-lived app-server session every 15 minutes.
+- Keep only the latest 14 normalized daily buckets in memory and display them as accessible English/Japanese menu rows.
+- Provide loading, empty, and unsupported states without adding permissions.
+- Exclude `thread/tokenUsage/updated`, thread resume/fork, thread identifiers, transcript or SQLite/JSONL usage parsing, durable usage storage, usage notifications, experimental APIs, and account mutation.
 
 ## Known Compatibility Risks
 
