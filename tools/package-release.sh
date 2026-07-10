@@ -15,7 +15,7 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE" "$DIST"
 "$ROOT/tools/build-limit-rings.sh" "$APP" >/dev/null
 
-file "$APP/Contents/MacOS/CodexPetLimitRings" | rg -q 'arm64'
+file "$APP/Contents/MacOS/CodexPetLimitRings" | grep -q 'arm64'
 codesign --verify --deep --strict "$APP"
 
 rm -f "$ARCHIVE" "$CHECKSUM"

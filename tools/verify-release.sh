@@ -21,23 +21,24 @@ swiftc \
 "$APP_BIN" --preview "$PREVIEW" --size 164
 test -s "$PREVIEW"
 
-if rg -n 'access_token|Authorization.*Bearer|URLSession\.shared|backend-api/wham/usage' \
+if grep -En 'access_token|Authorization.*Bearer|URLSession\.shared|backend-api/wham/usage' \
   "$ROOT/tools/codex-pet-limit-rings.swift"; then
   echo "release verification failed: legacy credential path remains in app source" >&2
   exit 1
 fi
 
-if rg -n --hidden \
-  --glob '!.git/**' \
-  --glob '!tmp/**' \
-  --glob '!docs/assets/**' \
-  '(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|-----BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY-----)' \
-  "$ROOT"; then
+if find "$ROOT" -type f \
+  ! -path "$ROOT/.git/*" \
+  ! -path "$ROOT/tmp/*" \
+  ! -path "$ROOT/docs/assets/*" \
+  -exec grep -EIln \
+    '(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|-----BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY-----)' \
+    {} +; then
   echo "release verification failed: secret-like material found" >&2
   exit 1
 fi
 
-rg -q 'MIT License' "$ROOT/LICENSE"
+grep -q 'MIT License' "$ROOT/LICENSE"
 
 plist_version="$(plutil -extract CFBundleShortVersionString raw "$ROOT/tools/CodexPetLimitRings-Info.plist")"
 source_version="$(sed -n 's/.*var version = "\([^"]*\)".*/\1/p' "$ROOT/tools/codex-pet-limit-rings.swift" | head -1)"
