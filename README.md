@@ -26,7 +26,7 @@ Because the rings are drawn in a separate transparent overlay, they do not need 
 
 The `0.5.x` downstream line keeps the original companion-app design and MIT license while focusing on compatibility with current ChatGPT/Codex desktop builds. It adds official app-server rate-limit reads, privacy-safe diagnostics, bounded fallback behavior, regression tests, and a shared local/CI release gate.
 
-The v0.5.1 compatibility candidate sets an explicit macOS 15.0 deployment target for source builds and packaged binaries. Until v0.5.1 is published, the existing v0.5.0 download still requires macOS 26 and macOS 15 users should install from source.
+The published v0.5.1 release sets an explicit macOS 15.0 deployment target for both source builds and the downloadable app. It supersedes the v0.5.0 binary, which remains available for provenance but requires macOS 26.
 
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
 
@@ -42,14 +42,15 @@ Pet wakeups are handled by a lightweight filesystem watcher on Codex's local glo
 
 ## Quick Start
 
-### Install The Published v0.5.0 App
+### Install The Published v0.5.1 App
 
-The published v0.5.0 app bundle was built with a minimum deployment target of macOS 26. On macOS 15, use the source installation below instead; the source release gate is tested on both macOS 15 and macOS 26.
+The published v0.5.1 app supports macOS 15 and later on Apple silicon. The same source and package gates run on macOS 15 and macOS 26.
 
-Download the published app and its checksum from the [v0.5.0 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.5.0), then verify the ZIP before opening it:
+Download the app and checksum from the [v0.5.1 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.5.1), then verify the ZIP before opening it. The expected ZIP SHA-256 is `ff1081de8e1e26ede32337d4cadec8b98a7b8bcc1be87f592d28b6beb70c165d`.
 
 ```bash
-version=0.5.0
+version=0.5.1
+expected_sha=ff1081de8e1e26ede32337d4cadec8b98a7b8bcc1be87f592d28b6beb70c165d
 release_dir="$HOME/Downloads/CodexPetLimitRings-v$version"
 base_url="https://github.com/Driedsandwich/codex-pet-limit-rings/releases/download/v$version"
 
@@ -57,32 +58,39 @@ mkdir -p "$release_dir"
 cd "$release_dir"
 curl --proto '=https' --tlsv1.2 -fLO "$base_url/CodexPetLimitRings-v$version-macos-arm64.zip"
 curl --proto '=https' --tlsv1.2 -fLO "$base_url/CodexPetLimitRings-v$version-macos-arm64.zip.sha256"
+printf '%s  %s\n' "$expected_sha" "CodexPetLimitRings-v$version-macos-arm64.zip" | shasum -a 256 -c -
 shasum -a 256 -c "CodexPetLimitRings-v$version-macos-arm64.zip.sha256"
 ditto -x -k "CodexPetLimitRings-v$version-macos-arm64.zip" .
 codesign --verify --deep --strict CodexPetLimitRings.app
 ```
 
-Back up an existing installation before replacing it:
+Back up an existing installation, stop its LaunchAgent, and replace it with the verified app:
 
 ```bash
+version=0.5.1
+release_dir="${release_dir:-$HOME/Downloads/CodexPetLimitRings-v$version}"
 backup="$HOME/Library/Application Support/CodexPetLimitRings/Backups/$(date +%Y%m%d-%H%M%S)"
+app="$HOME/Applications/CodexPetLimitRings.app"
+agent="$HOME/Library/LaunchAgents/com.codex-pet.limit-rings.plist"
+gui="gui/$(id -u)"
+
 mkdir -p "$backup" "$HOME/Applications"
-if [[ -f "$HOME/Library/LaunchAgents/com.codex-pet.limit-rings.plist" ]]; then
-  cp -a "$HOME/Library/LaunchAgents/com.codex-pet.limit-rings.plist" "$backup/com.codex-pet.limit-rings.plist"
+if [[ -f "$agent" ]]; then
+  cp -a "$agent" "$backup/com.codex-pet.limit-rings.plist"
 fi
-```
-
-Quit the running app, replace the bundle, and open the verified release:
-
-```bash
-backup="${backup:-$HOME/Library/Application Support/CodexPetLimitRings/Backups/$(date +%Y%m%d-%H%M%S)}"
-mkdir -p "$backup" "$HOME/Applications"
+launchctl bootout "$gui" "$agent" >/dev/null 2>&1 || true
 pkill -TERM -f 'CodexPetLimitRings.app/Contents/MacOS/CodexPetLimitRings' >/dev/null 2>&1 || true
-if [[ -d "$HOME/Applications/CodexPetLimitRings.app" ]]; then
-  mv "$HOME/Applications/CodexPetLimitRings.app" "$backup/CodexPetLimitRings.app"
+if [[ -d "$app" ]]; then
+  mv "$app" "$backup/CodexPetLimitRings.app"
 fi
-ditto "$release_dir/CodexPetLimitRings.app" "$HOME/Applications/CodexPetLimitRings.app"
-open "$HOME/Applications/CodexPetLimitRings.app"
+ditto "$release_dir/CodexPetLimitRings.app" "$app"
+if [[ -f "$agent" ]]; then
+  launchctl bootstrap "$gui" "$agent"
+  launchctl kickstart -k "$gui/com.codex-pet.limit-rings"
+else
+  open "$app"
+fi
+printf 'Rollback backup: %s\n' "$backup"
 ```
 
 Verify the installed version and privacy-safe runtime diagnostics:
@@ -90,6 +98,10 @@ Verify the installed version and privacy-safe runtime diagnostics:
 ```bash
 plutil -extract CFBundleShortVersionString raw \
   "$HOME/Applications/CodexPetLimitRings.app/Contents/Info.plist"
+plutil -extract LSMinimumSystemVersion raw \
+  "$HOME/Applications/CodexPetLimitRings.app/Contents/Info.plist"
+vtool -show-build \
+  "$HOME/Applications/CodexPetLimitRings.app/Contents/MacOS/CodexPetLimitRings"
 "$HOME/Applications/CodexPetLimitRings.app/Contents/MacOS/CodexPetLimitRings" --diagnose
 ```
 
@@ -230,13 +242,13 @@ tools/package-release.sh
 Smoke-test the published release without replacing the installed app:
 
 ```bash
-tools/smoke-release-artifact.sh 0.5.0
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.5.1
 ```
 
 On an older macOS host, perform checksum, signature, architecture, version, and deployment-target inspection without launching the binary:
 
 ```bash
-EXPECTED_MIN_OS=26.0 tools/smoke-release-artifact.sh 0.5.0 --inspect-only
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.5.1 --inspect-only
 ```
 
 ## Experiments

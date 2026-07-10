@@ -52,6 +52,22 @@ Confirm the menu-bar source is `App Server`, `Cached`, or `Local`, the ring rema
 - Create the fork, push, upstream PR, and downstream release as separate operations.
 - Record the fork URL, commit/tag, CI result, PR URL/status, and known limitations.
 
+### Published v0.5.1 Evidence
+
+- Release commit: `8974665631f6ef9923ef2233bf82246e840330e3`.
+- Tag and Release: [`v0.5.1`](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v0.5.1).
+- Release ZIP SHA-256: `ff1081de8e1e26ede32337d4cadec8b98a7b8bcc1be87f592d28b6beb70c165d`.
+- Packaged architecture: Apple silicon `arm64`.
+- Packaged minimum OS: macOS `15.0` in both `LSMinimumSystemVersion` and the Mach-O build command.
+- Signing status: ad-hoc signed and not notarized.
+- Final pull-request and push CI passed on macOS 15 and macOS 26.
+- Merge-commit CI passed on macOS 15 and macOS 26.
+- The published artifact smoke test passed checksum, signature, architecture, version, deployment-target, and preview-execution checks:
+
+```bash
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.5.1
+```
+
 ## Rollback
 
 Follow [rollback.md](rollback.md) and verify the restored app before considering cleanup.
