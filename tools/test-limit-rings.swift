@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SQLite3
 
@@ -20,6 +21,7 @@ struct LimitRingsTests {
             try testNotificationTransitionsAndDedupe()
             try testNotificationsAreOffByDefault()
             try testAccessibilityPresentationIsExplicit()
+            try testAccessibilityRendererProducesImage()
             try testRecentAppServerSnapshotSurvivesTransientFailure()
             try testExpiredAppServerSnapshotIsDiscarded()
             try testNewestLogsDatabaseWins()
@@ -89,6 +91,37 @@ struct LimitRingsTests {
         try expect(presentation.reduceMotion, "expected reduced motion")
         try expect(presentation.increaseContrast, "expected increased contrast")
         try expect(presentation.differentiateWithoutColor, "expected non-color differentiation")
+    }
+
+    private static func testAccessibilityRendererProducesImage() throws {
+        let state = LimitState(
+            planType: "pro",
+            primary: LimitBucket(usedPercent: 76, windowMinutes: 300, resetAt: nil),
+            secondary: LimitBucket(usedPercent: 92, windowMinutes: 10080, resetAt: nil),
+            additional: [
+                AdditionalLimit(
+                    id: "review",
+                    name: "Code Review",
+                    primary: LimitBucket(usedPercent: 50, windowMinutes: 10080, resetAt: nil),
+                    secondary: nil,
+                    credits: nil,
+                    individualLimit: nil,
+                    reachedType: nil
+                )
+            ],
+            observedAt: Date(),
+            source: "app-server"
+        )
+        let image = NSImage(size: NSSize(width: 200, height: 200))
+        image.lockFocus()
+        LimitRingRenderer(
+            state: state,
+            phase: 0.75,
+            showsReadout: true,
+            accessibility: AccessibilityPresentation(reduceMotion: true, increaseContrast: true, differentiateWithoutColor: true)
+        ).draw(in: CGRect(x: 0, y: 0, width: 200, height: 200))
+        image.unlockFocus()
+        try expect(image.tiffRepresentation?.isEmpty == false, "expected accessibility renderer output")
     }
 
     private static func testRecentAppServerSnapshotSurvivesTransientFailure() throws {
