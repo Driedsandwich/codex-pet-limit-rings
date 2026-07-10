@@ -16,7 +16,9 @@ The rings are designed to be glanceable:
 - The inner ring shows the weekly limit remaining.
 - Color moves from calm green/blue to amber and red as capacity gets low.
 - Hovering over the pet or rings shows the exact percentages at the current ring endpoints.
-- A small menu-bar icon lets you hide the rings, refresh data, or quit.
+- A small menu-bar icon exposes all available limit buckets, credits, monthly spend controls, reset credits, and limit status without modifying the account.
+- Optional 25%, 10%, and recovery notifications are off by default and request macOS permission only when enabled.
+- Reduced Motion, Increase Contrast, Differentiate Without Color, English, and Japanese are supported.
 
 When the Codex pet is closed, the rings disappear. When the pet comes back, they come back too. On multi-display setups, the rings stay with the pet instead of jumping to whichever screen is focused.
 
@@ -27,6 +29,8 @@ Because the rings are drawn in a separate transparent overlay, they do not need 
 The `0.5.x` downstream line keeps the original companion-app design and MIT license while focusing on compatibility with current ChatGPT/Codex desktop builds. It adds official app-server rate-limit reads, privacy-safe diagnostics, bounded fallback behavior, regression tests, and a shared local/CI release gate.
 
 The published v0.5.1 release sets an explicit macOS 15.0 deployment target for both source builds and the downloadable app. It supersedes the v0.5.0 binary, which remains available for provenance but requires macOS 26.
+
+The unreleased v0.6.0 source line adds read-only limit intelligence, opt-in notifications, accessibility-aware rendering, and English/Japanese UI. It deliberately does not consume reset credits, read daily account usage, or collect per-thread usage.
 
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
 
@@ -115,7 +119,7 @@ Clone this repository, then install the rings and LaunchAgent from source:
 tools/install-limit-rings.sh
 ```
 
-You should see a small rings icon in the macOS menu bar. Use that menu to toggle `Show Rings`, refresh the latest usage data, or quit.
+You should see a small rings icon in the macOS menu bar. Use that menu to inspect limit details, toggle rings, opt in to local notifications, refresh data, or quit. Notifications remain off until you enable them.
 
 Then use any Codex pet normally. No pet setup step is required.
 

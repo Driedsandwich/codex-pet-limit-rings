@@ -11,6 +11,11 @@ mkdir -p "$ROOT/tmp"
 
 bash -n "$ROOT"/tools/*.sh
 plutil -lint "$PLIST" >/dev/null
+plutil -lint "$ROOT/resources/en.lproj/Localizable.strings" >/dev/null
+plutil -lint "$ROOT/resources/ja.lproj/Localizable.strings" >/dev/null
+diff \
+  <(sed -n 's/^\("[^"]*"\).*/\1/p' "$ROOT/resources/en.lproj/Localizable.strings" | sort) \
+  <(sed -n 's/^\("[^"]*"\).*/\1/p' "$ROOT/resources/ja.lproj/Localizable.strings" | sort)
 "$ROOT/tools/test-limit-rings.sh"
 
 swiftc \
@@ -19,6 +24,7 @@ swiftc \
   "$ROOT/tools/codex-pet-limit-rings.swift" \
   -o "$APP_BIN" \
   -framework AppKit \
+  -framework UserNotifications \
   -lsqlite3
 
 "$APP_BIN" --preview "$PREVIEW" --size 164
@@ -36,6 +42,12 @@ if grep -En 'access_token|Authorization.*Bearer|URLSession\.shared|backend-api/w
   exit 1
 fi
 
+if grep -En 'account/rateLimitResetCredit/consume|account/usage/read|thread/tokenUsage/updated' \
+  "$ROOT/tools/codex-pet-limit-rings.swift"; then
+  echo "release verification failed: excluded mutation or v0.7 data path found in v0.6 source" >&2
+  exit 1
+fi
+
 if find "$ROOT" -type f \
   ! -path "$ROOT/.git/*" \
   ! -path "$ROOT/tmp/*" \
@@ -48,6 +60,8 @@ if find "$ROOT" -type f \
 fi
 
 grep -q 'MIT License' "$ROOT/LICENSE"
+test -f "$ROOT/resources/en.lproj/Localizable.strings"
+test -f "$ROOT/resources/ja.lproj/Localizable.strings"
 
 plist_version="$(plutil -extract CFBundleShortVersionString raw "$PLIST")"
 source_version="$(sed -n 's/.*var version = "\([^"]*\)".*/\1/p' "$ROOT/tools/codex-pet-limit-rings.swift" | head -1)"

@@ -10,6 +10,20 @@ OLD_APP="${CODEX_LIMIT_AURA_APP:-$HOME/Applications/CodexLimitAura.app}"
 OLD_BIN="$OLD_APP/Contents/MacOS/CodexLimitAura"
 OLD_AGENT="$AGENT_DIR/com.codex-pet.limit-aura.plist"
 GUI_TARGET="gui/$(id -u)"
+BACKUP_ROOT="$HOME/Library/Application Support/CodexPetLimitRings/Backups"
+
+if [[ -d "$APP" || -f "$AGENT" ]]; then
+  backup="$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$backup"
+  if [[ -d "$APP" ]]; then
+    cp -a "$APP" "$backup/CodexPetLimitRings.app"
+  fi
+  if [[ -f "$AGENT" ]]; then
+    cp -a "$AGENT" "$backup/com.codex-pet.limit-rings.plist"
+  fi
+  defaults export local.codex.pet-limit-rings "$backup/preferences.plist" >/dev/null 2>&1 || true
+  echo "Backed up existing installation at $backup"
+fi
 
 mkdir -p "$(dirname "$APP")" "$AGENT_DIR" "$HOME/Library/Logs"
 

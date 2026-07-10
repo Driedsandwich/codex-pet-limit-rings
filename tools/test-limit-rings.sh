@@ -13,6 +13,7 @@ swiftc \
   "$ROOT/tools/test-limit-rings.swift" \
   -o "$TEST_BIN" \
   -framework AppKit \
+  -framework UserNotifications \
   -lsqlite3
 
 "$TEST_BIN"

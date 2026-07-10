@@ -19,11 +19,11 @@ For app changes, verify:
 ```bash
 bash -n tools/*.sh
 deployment_target="$(plutil -extract LSMinimumSystemVersion raw tools/CodexPetLimitRings-Info.plist)"
-swiftc -parse-as-library -target "arm64-apple-macosx$deployment_target" tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
+swiftc -parse-as-library -target "arm64-apple-macosx$deployment_target" tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -framework UserNotifications -lsqlite3
 tools/test-limit-rings.sh
 tools/verify-release.sh
 tools/package-release.sh
-tools/smoke-release-artifact.sh 0.5.0
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.5.1
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 ```
 
