@@ -282,6 +282,10 @@ func connectionHealthState(isConnected: Bool, limitSource: String) -> Connection
     return .reconnecting
 }
 
+func shouldApplyPolledLimitState(isLiveConnected: Bool) -> Bool {
+    !isLiveConnected
+}
+
 enum DataFreshnessState: String, Equatable {
     case current
     case stale
@@ -2017,7 +2021,9 @@ final class LimitRingsApp: NSObject {
             guard let self else { return }
             let state = self.stateReader.readLatest()
             DispatchQueue.main.async {
-                self.applyLimitState(state)
+                if shouldApplyPolledLimitState(isLiveConnected: self.appServerConnected) {
+                    self.applyLimitState(state)
+                }
                 self.stateReadInFlight = false
             }
         }

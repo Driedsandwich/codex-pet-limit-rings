@@ -158,6 +158,8 @@ struct LimitRingsTests {
         try expect(connectionHealthState(isConnected: false, limitSource: "none") == .reconnecting, "expected disconnected state without fallback data")
         try expect(connectionHealthState(isConnected: false, limitSource: "cached") == .pollFallback, "expected cached poll fallback state")
         try expect(connectionHealthState(isConnected: false, limitSource: "local") == .pollFallback, "expected local poll fallback state")
+        try expect(shouldApplyPolledLimitState(isLiveConnected: false), "expected fallback polling while disconnected")
+        try expect(!shouldApplyPolledLimitState(isLiveConnected: true), "expected an in-flight fallback result not to overwrite restored live state")
     }
 
     private static func testCompatibilityFreshnessAndSafeFailureReasons() throws {
