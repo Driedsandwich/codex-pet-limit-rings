@@ -258,13 +258,13 @@ tools/package-release.sh
 Smoke-test the published release without replacing the installed app:
 
 ```bash
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.7.0
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.1
 ```
 
 On an older macOS host, perform checksum, signature, architecture, version, and deployment-target inspection without launching the binary:
 
 ```bash
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.7.0 --inspect-only
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.1 --inspect-only
 ```
 
 ## Experiments
