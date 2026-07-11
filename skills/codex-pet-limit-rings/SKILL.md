@@ -60,14 +60,14 @@ launchctl print "gui/$(id -u)/com.codex-pet.limit-rings" >/dev/null
 
 The rings read:
 
-- One long-lived `codex app-server --stdio` connection using stable `account/rateLimits/read` plus sparse `account/rateLimits/updated` notifications for primary usage-limit data.
+- One long-lived `codex app-server --stdio` connection using stable `account/rateLimits/read` plus sparse `account/rateLimits/updated` notifications for primary usage-limit data. If a connected session has no successful rate-limit observation for 120 seconds, one coalesced five-second full-read reconcile is allowed; sparse updates received in flight must be reapplied afterward.
 - The stable `account/usage/read` method every 15 minutes for a memory-only, last-14-days daily usage view.
 - `~/.codex/.codex-global-state.json` for `electron-avatar-overlay-open` and `electron-avatar-overlay-bounds.mascot`.
 - The newest existing `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite` for fallback to the newest current `codex.rate_limits` event when app-server fails.
 
 The app must not read `auth.json` or call the undocumented `backend-api/wham/usage` endpoint. The outer ring is the short-window remaining percentage. The inner ring is the weekly remaining percentage. The menu summary distinguishes `App Server`, `Cached`, and `Local` sources and must not show expired values as current. Sparse notifications must preserve nullable metadata from the latest full snapshot. The details submenu may show multiple limit buckets, credits, monthly spend control, reached reasons, and reset-credit availability, but must never consume a reset credit or mutate the account.
 
-Notifications are local, off by default, and request permission only after the user enables them. Cached or SQLite fallback values must not trigger notifications. Daily usage and aggregate milestones must not be written to preferences, SQLite, JSONL, or another durable store. Connection health may use only the selected CLI's bounded version output, existing in-memory connection flag, fallback source, safe failure category, and rate-limit/usage observation times. Do not expose CLI paths or raw process output. Do not subscribe to `thread/tokenUsage/updated`, resume or fork threads, or retain thread or turn identifiers.
+Notifications are local, off by default, and request permission only after the user enables them. Cached or SQLite fallback values must not trigger notifications. Daily usage, aggregate milestones, and live/full/value-change cadence observations must not be written to preferences, SQLite, JSONL, or another durable store. Connection health may use only the selected CLI's bounded version output, existing in-memory connection flag, fallback source, safe failure category, and rate-limit/usage observation times. Do not expose CLI paths or raw process output. Do not subscribe to `thread/tokenUsage/updated`, resume or fork threads, or retain thread or turn identifiers.
 
 Honor Reduced Motion, Increase Contrast, and Differentiate Without Color. Keep English and Japanese localization resources in the app bundle.
 

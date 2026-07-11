@@ -66,6 +66,14 @@ The first downstream parent commit changes live pet-window matching from the vis
 - Keep decoding forward-compatible with unknown fields and unknown reached-reason strings while treating absent optional data as waiting or unavailable.
 - Continue excluding thread/turn identifiers, per-thread token events, resume/fork, durable usage storage, reset-credit consumption, new notifications, experimental APIs, and account mutation.
 
+## v1.0.1 Live Update Cadence Candidate
+
+- Keep sparse `account/rateLimits/updated` notifications as the primary connected update path and reconcile with a full read only after 120 seconds without a successful observation.
+- Coalesce manual and scheduled full reads behind one five-second in-flight request gate.
+- Buffer sparse notifications during a full read and reapply them afterward so newer live values win without discarding full-snapshot metadata.
+- Display live-notification, full-sync, and displayed-value-change times and origins in memory only, localized in English and Japanese.
+- Continue excluding durable diagnostics, IPC, new permissions or notification types, account mutation, thread APIs, and experimental APIs.
+
 ## Known Compatibility Risks
 
 - The Codex app-server command is still labeled experimental even though the rate-limit methods used here are present in its stable generated schema.

@@ -4,7 +4,13 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
-No changes yet.
+### Live Update Cadence
+
+- Reconcile the full read-only rate-limit snapshot after 120 seconds without a successful live observation while app-server remains connected.
+- Coalesce manual and scheduled full reads behind one five-second in-flight request gate.
+- Buffer sparse live notifications received during a full read and reapply them to the returned snapshot, preserving the newest value without losing nullable metadata.
+- Show the last live notification, full sync, and displayed-value change time and path in Connection Health, in memory only.
+- Continue excluding durable diagnostics, IPC, new permissions or notification types, account mutation, thread APIs, and experimental APIs.
 
 ## 1.0.0 - 2026-07-11
 
