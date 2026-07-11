@@ -4,6 +4,10 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
+No changes yet.
+
+## 1.0.0 - 2026-07-11
+
 ### Compatibility & Data Trust
 
 - Show the active Codex CLI version and explicit live, cached, local, or reconnecting source state.
