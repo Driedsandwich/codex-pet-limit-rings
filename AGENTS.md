@@ -23,7 +23,7 @@ swiftc -parse-as-library -target "arm64-apple-macosx$deployment_target" tools/co
 tools/test-limit-rings.sh
 tools/verify-release.sh
 tools/package-release.sh
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.8.0
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 0.9.0
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 ```
 
