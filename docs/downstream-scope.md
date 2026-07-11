@@ -57,6 +57,15 @@ The first downstream parent commit changes live pet-window matching from the vis
 - Show the last in-memory usage observation time and keep all status presentation English/Japanese and distinguishable without color.
 - Continue excluding thread/turn identifiers, per-thread token events, resume/fork, durable usage storage, reset-credit consumption, new notifications, experimental APIs, and account mutation.
 
+## v1.0.0 Compatibility & Data Trust
+
+- Identify the selected Codex CLI by a bounded, sanitized `--version` result without exposing its path.
+- Display separate last-success times and freshness states for rate limits and account usage.
+- Distinguish live app-server, in-memory cached, local SQLite fallback, and reconnecting states with words and symbols rather than color alone.
+- Map connection failures to a small privacy-safe localized reason set; raw process output remains discarded.
+- Keep decoding forward-compatible with unknown fields and unknown reached-reason strings while treating absent optional data as waiting or unavailable.
+- Continue excluding thread/turn identifiers, per-thread token events, resume/fork, durable usage storage, reset-credit consumption, new notifications, experimental APIs, and account mutation.
+
 ## Known Compatibility Risks
 
 - The Codex app-server command is still labeled experimental even though the rate-limit methods used here are present in its stable generated schema.

@@ -69,7 +69,10 @@ private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
 private let notificationsEnabledDefaultsKey = "CodexPetLimitRings.notificationsEnabled"
 private let notificationBandsDefaultsKey = "CodexPetLimitRings.notificationBands"
 private let appServerLimitStateTimeout: TimeInterval = 5.0
+private let codexCLIVersionTimeout: TimeInterval = 2.0
 private let limitStateFallbackMaxAge: TimeInterval = 30 * 60
+private let rateLimitFreshnessMaxAge: TimeInterval = 30 * 60
+private let usageFreshnessMaxAge: TimeInterval = 30 * 60
 
 private func localized(_ key: String, fallback: String) -> String {
     NSLocalizedString(key, tableName: nil, bundle: .main, value: fallback, comment: "")
@@ -154,7 +157,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "0.9.0"
+    var version = "1.0.0"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -277,6 +280,75 @@ func connectionHealthState(isConnected: Bool, limitSource: String) -> Connection
     if isConnected { return .live }
     if limitSource == "cached" || limitSource == "local" { return .pollFallback }
     return .reconnecting
+}
+
+func shouldApplyPolledLimitState(isLiveConnected: Bool) -> Bool {
+    !isLiveConnected
+}
+
+enum DataFreshnessState: String, Equatable {
+    case current
+    case stale
+    case waiting
+}
+
+func dataFreshnessState(observedAt: Date?, now: Date = Date(), maxAge: TimeInterval) -> DataFreshnessState {
+    guard let observedAt else { return .waiting }
+    let age = now.timeIntervalSince(observedAt)
+    return age >= 0 && age <= maxAge ? .current : .stale
+}
+
+enum ConnectionFailureReason: String, Equatable {
+    case cliUnavailable
+    case incompatibleResponse
+    case timedOut
+    case disconnected
+    case communicationFailed
+    case unknown
+}
+
+func connectionFailureReason(for errorCode: String?) -> ConnectionFailureReason? {
+    guard let errorCode else { return nil }
+    switch errorCode {
+    case "cli_not_found", "launch_failed": return .cliUnavailable
+    case "invalid_rate_limit_response", "invalid_account_usage_response": return .incompatibleResponse
+    case "initialize_timeout", "rate_limit_timeout", "account_usage_timeout": return .timedOut
+    case "app_server_terminated", "initialize_failed", "app_server_disconnected": return .disconnected
+    case "request_write_failed", "rate_limit_write_failed", "account_usage_write_failed": return .communicationFailed
+    default: return .unknown
+    }
+}
+
+func normalizedCodexCLIVersion(_ output: String) -> String? {
+    guard let firstLine = output.split(whereSeparator: { $0.isNewline }).first else { return nil }
+    let value = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !value.isEmpty, value.count <= 120 else { return nil }
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " ._+-"))
+    guard value.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return nil }
+    return value
+}
+
+private func readCodexCLIVersion(at url: URL) -> String? {
+    let process = Process()
+    let output = Pipe()
+    let completed = DispatchSemaphore(value: 0)
+    process.executableURL = url
+    process.arguments = ["--version"]
+    process.standardOutput = output
+    process.standardError = Pipe()
+    process.terminationHandler = { _ in completed.signal() }
+    do {
+        try process.run()
+    } catch {
+        return nil
+    }
+    if completed.wait(timeout: .now() + codexCLIVersionTimeout) == .timedOut {
+        process.terminate()
+        return nil
+    }
+    guard process.terminationStatus == 0 else { return nil }
+    let text = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    return normalizedCodexCLIVersion(text)
 }
 
 struct AppServerRateLimitResult: Decodable {
@@ -765,6 +837,7 @@ final class AppServerLiveClient {
     typealias RateLimitHandler = (LimitState) -> Void
     typealias UsageHandler = (DailyUsageSnapshot?, String?) -> Void
     typealias ConnectionHandler = (Bool, String?) -> Void
+    typealias CLIHandler = (String, String?) -> Void
 
     private let codexHome: URL
     private let queue = DispatchQueue(label: "codex-pet-limit-rings.app-server-live")
@@ -778,12 +851,14 @@ final class AppServerLiveClient {
     private var rateLimitResult: AppServerRateLimitResult?
     private var reconnectAttempt = 0
     private var connectionGeneration = 0
+    private var identifiedCLIPath: String?
     private var ready = false
     private var stopped = true
 
     var onRateLimitState: RateLimitHandler?
     var onUsage: UsageHandler?
     var onConnectionChanged: ConnectionHandler?
+    var onCLIIdentified: CLIHandler?
 
     init(codexHome: URL) {
         self.codexHome = codexHome
@@ -823,6 +898,10 @@ final class AppServerLiveClient {
             reportDisconnected("cli_not_found")
             scheduleReconnect()
             return
+        }
+        if identifiedCLIPath != codexCLI.path {
+            identifiedCLIPath = codexCLI.path
+            onCLIIdentified?(codexCLISource(codexCLI), readCodexCLIVersion(at: codexCLI))
         }
 
         connectionGeneration += 1
@@ -1858,6 +1937,10 @@ final class LimitRingsApp: NSObject {
     private var currentLimitSource = "none"
     private var dailyUsageSnapshot: DailyUsageSnapshot?
     private var dailyUsageErrorCode: String?
+    private var lastRateLimitObservedAt: Date?
+    private var lastConnectionErrorCode: String?
+    private var codexCLISourceName = "not-found"
+    private var codexCLIVersion: String?
 
     init(config: LimitRingsConfig) {
         self.config = config
@@ -1938,17 +2021,28 @@ final class LimitRingsApp: NSObject {
             guard let self else { return }
             let state = self.stateReader.readLatest()
             DispatchQueue.main.async {
-                self.applyLimitState(state)
+                if shouldApplyPolledLimitState(isLiveConnected: self.appServerConnected) {
+                    self.applyLimitState(state)
+                }
                 self.stateReadInFlight = false
             }
         }
     }
 
     private func configureLiveClient() {
+        liveClient.onCLIIdentified = { [weak self] source, version in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.codexCLISourceName = source
+                self.codexCLIVersion = version
+                self.updateConnectionHealthMenu()
+            }
+        }
         liveClient.onConnectionChanged = { [weak self] connected, errorCode in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.appServerConnected = connected
+                self.lastConnectionErrorCode = connected ? nil : errorCode
                 if !connected {
                     if self.dailyUsageSnapshot == nil {
                         self.dailyUsageErrorCode = errorCode
@@ -1983,6 +2077,9 @@ final class LimitRingsApp: NSObject {
 
     private func applyLimitState(_ state: LimitState) {
         currentLimitSource = state.source
+        if state.source != "none" {
+            lastRateLimitObservedAt = state.observedAt
+        }
         ringView.state = state
         updateSummaryMenuItem()
         updateLimitDetailsMenu()
@@ -2397,27 +2494,99 @@ final class LimitRingsApp: NSObject {
         case .pollFallback:
             statusTitle = localized("connection.pollFallback", fallback: "↙ Poll fallback while reconnecting")
         }
-        let statusItem = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
-        statusItem.isEnabled = false
-        menu.addItem(statusItem)
+        appendDisabledMenuItem(statusTitle, to: menu)
 
-        if let observedAt = dailyUsageSnapshot?.observedAt {
-            let time = DateFormatter.localizedString(from: observedAt, dateStyle: .none, timeStyle: .short)
-            let updatedItem = NSMenuItem(
-                title: String(format: localized("connection.usageUpdated", fallback: "Usage updated: %@"), time),
-                action: nil,
-                keyEquivalent: ""
+        let sourceLabel: String
+        switch currentLimitSource {
+        case "app-server": sourceLabel = localized("connection.sourceLive", fallback: "Live")
+        case "cached": sourceLabel = localized("connection.sourceCached", fallback: "Cached")
+        case "local": sourceLabel = localized("connection.sourceLocal", fallback: "Local")
+        default: sourceLabel = localized("connection.sourceWaiting", fallback: "Waiting")
+        }
+        appendDisabledMenuItem(
+            String(format: localized("connection.source", fallback: "Rate-limit source: %@"), sourceLabel),
+            to: menu
+        )
+
+        let cliIdentity = codexCLIVersion ?? codexCLISourceName
+        appendDisabledMenuItem(
+            String(format: localized("connection.codexCLI", fallback: "Codex CLI: %@"), cliIdentity),
+            to: menu
+        )
+
+        appendFreshnessRow(
+            observedAt: lastRateLimitObservedAt,
+            maxAge: rateLimitFreshnessMaxAge,
+            updatedKey: "connection.rateLimitsUpdated",
+            updatedFallback: "Rate limits updated: %@ · %@",
+            waitingKey: "connection.rateLimitsWaiting",
+            waitingFallback: "Rate-limit update pending",
+            to: menu
+        )
+        appendFreshnessRow(
+            observedAt: dailyUsageSnapshot?.observedAt,
+            maxAge: usageFreshnessMaxAge,
+            updatedKey: "connection.usageUpdated",
+            updatedFallback: "Usage updated: %@ · %@",
+            waitingKey: "connection.usageWaiting",
+            waitingFallback: "Usage update pending",
+            to: menu
+        )
+
+        if let reason = connectionFailureReason(for: lastConnectionErrorCode) {
+            appendDisabledMenuItem(
+                String(
+                    format: localized("connection.reason", fallback: "Reason: %@"),
+                    localizedConnectionFailureReason(reason)
+                ),
+                to: menu
             )
-            updatedItem.isEnabled = false
-            menu.addItem(updatedItem)
-        } else {
-            let waitingItem = NSMenuItem(
-                title: localized("connection.usageWaiting", fallback: "Usage update pending"),
-                action: nil,
-                keyEquivalent: ""
-            )
-            waitingItem.isEnabled = false
-            menu.addItem(waitingItem)
+        }
+    }
+
+    private func appendFreshnessRow(
+        observedAt: Date?,
+        maxAge: TimeInterval,
+        updatedKey: String,
+        updatedFallback: String,
+        waitingKey: String,
+        waitingFallback: String,
+        to menu: NSMenu
+    ) {
+        guard let observedAt else {
+            appendDisabledMenuItem(localized(waitingKey, fallback: waitingFallback), to: menu)
+            return
+        }
+        let time = DateFormatter.localizedString(from: observedAt, dateStyle: .none, timeStyle: .short)
+        let freshness = dataFreshnessState(observedAt: observedAt, maxAge: maxAge)
+        appendDisabledMenuItem(
+            String(format: localized(updatedKey, fallback: updatedFallback), time, localizedFreshness(freshness)),
+            to: menu
+        )
+    }
+
+    private func appendDisabledMenuItem(_ title: String, to menu: NSMenu) {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        menu.addItem(item)
+    }
+
+    private func localizedFreshness(_ freshness: DataFreshnessState) -> String {
+        switch freshness {
+        case .current: return localized("freshness.current", fallback: "✓ Current")
+        case .stale: return localized("freshness.stale", fallback: "! Stale")
+        case .waiting: return localized("freshness.waiting", fallback: "… Waiting")
+        }
+    }
+
+    private func localizedConnectionFailureReason(_ reason: ConnectionFailureReason) -> String {
+        switch reason {
+        case .cliUnavailable: return localized("reason.cliUnavailable", fallback: "Codex CLI unavailable")
+        case .incompatibleResponse: return localized("reason.incompatibleResponse", fallback: "Unsupported response shape")
+        case .timedOut: return localized("reason.timedOut", fallback: "app-server timed out")
+        case .disconnected: return localized("reason.disconnected", fallback: "app-server disconnected")
+        case .communicationFailed: return localized("reason.communicationFailed", fallback: "app-server communication failed")
+        case .unknown: return localized("reason.unknown", fallback: "Temporary compatibility issue")
         }
     }
 
@@ -3050,8 +3219,12 @@ private struct CompatibilityDiagnostics: Encodable {
     var codexAppRunning: Bool
     var codexAppVersion: String?
     var codexCLI: String
+    var codexCLIVersion: String?
     var appServer: String
     var appServerError: String?
+    var appServerFailureReason: String?
+    var rateLimitFreshness: String
+    var usageFreshness: String
     var globalStateExists: Bool
     var avatarOverlayOpen: Bool?
     var petFrameReadable: Bool
@@ -3094,8 +3267,18 @@ func runDiagnostics(config: LimitRingsConfig) -> Bool {
         codexAppRunning: runningCodex != nil,
         codexAppVersion: codexBundle?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
         codexCLI: codexCLISource(probe.cliPath),
+        codexCLIVersion: probe.cliPath.flatMap { readCodexCLIVersion(at: $0) },
         appServer: probe.state == nil ? "unavailable" : "ready",
         appServerError: probe.errorCode,
+        appServerFailureReason: connectionFailureReason(for: probe.errorCode)?.rawValue,
+        rateLimitFreshness: dataFreshnessState(
+            observedAt: probe.state?.observedAt,
+            maxAge: rateLimitFreshnessMaxAge
+        ).rawValue,
+        usageFreshness: dataFreshnessState(
+            observedAt: usageProbe.snapshot?.observedAt,
+            maxAge: usageFreshnessMaxAge
+        ).rawValue,
         globalStateExists: stateData != nil,
         avatarOverlayOpen: avatarOpen,
         petFrameReadable: PetFrameReader(globalStatePath: config.globalStatePath).readPetFrameTopLeft() != nil,

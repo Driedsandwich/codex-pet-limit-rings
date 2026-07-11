@@ -23,6 +23,8 @@ struct LimitRingsTests {
             try testAccountUsageDecodeAndFourteenDayNormalization()
             try testAccountUsageEmptyAndAccessibleBars()
             try testUsageMilestonesAndConnectionHealth()
+            try testCompatibilityFreshnessAndSafeFailureReasons()
+            try testUnknownAndOptionalProtocolFieldsRemainCompatible()
             try testNotificationTransitionsAndDedupe()
             try testNotificationsAreOffByDefault()
             try testAccessibilityPresentationIsExplicit()
@@ -156,6 +158,44 @@ struct LimitRingsTests {
         try expect(connectionHealthState(isConnected: false, limitSource: "none") == .reconnecting, "expected disconnected state without fallback data")
         try expect(connectionHealthState(isConnected: false, limitSource: "cached") == .pollFallback, "expected cached poll fallback state")
         try expect(connectionHealthState(isConnected: false, limitSource: "local") == .pollFallback, "expected local poll fallback state")
+        try expect(shouldApplyPolledLimitState(isLiveConnected: false), "expected fallback polling while disconnected")
+        try expect(!shouldApplyPolledLimitState(isLiveConnected: true), "expected an in-flight fallback result not to overwrite restored live state")
+    }
+
+    private static func testCompatibilityFreshnessAndSafeFailureReasons() throws {
+        let now = Date(timeIntervalSince1970: 10_000)
+        try expect(dataFreshnessState(observedAt: nil, now: now, maxAge: 100) == .waiting, "expected missing observation to wait")
+        try expect(dataFreshnessState(observedAt: now.addingTimeInterval(-100), now: now, maxAge: 100) == .current, "expected freshness boundary to remain current")
+        try expect(dataFreshnessState(observedAt: now.addingTimeInterval(-101), now: now, maxAge: 100) == .stale, "expected old observation to become stale")
+        try expect(dataFreshnessState(observedAt: now.addingTimeInterval(1), now: now, maxAge: 100) == .stale, "expected future observation to fail closed")
+
+        try expect(connectionFailureReason(for: nil) == nil, "expected no failure reason while connected")
+        try expect(connectionFailureReason(for: "cli_not_found") == .cliUnavailable, "expected safe CLI classification")
+        try expect(connectionFailureReason(for: "invalid_rate_limit_response") == .incompatibleResponse, "expected safe protocol classification")
+        try expect(connectionFailureReason(for: "account_usage_timeout") == .timedOut, "expected safe timeout classification")
+        try expect(connectionFailureReason(for: "app_server_terminated") == .disconnected, "expected safe disconnect classification")
+        try expect(connectionFailureReason(for: "request_write_failed") == .communicationFailed, "expected safe communication classification")
+        try expect(connectionFailureReason(for: "future_error") == .unknown, "expected unknown errors not to leak raw details")
+
+        try expect(normalizedCodexCLIVersion("codex-cli 0.144.0-alpha.4\n") == "codex-cli 0.144.0-alpha.4", "expected safe CLI version")
+        try expect(normalizedCodexCLIVersion("codex-cli 1.0; cat /secret\n") == nil, "expected shell-like version text to be rejected")
+        try expect(normalizedCodexCLIVersion(String(repeating: "x", count: 121)) == nil, "expected oversized version text to be rejected")
+    }
+
+    private static func testUnknownAndOptionalProtocolFieldsRemainCompatible() throws {
+        let limits = #"{"id":2,"result":{"futureTopLevel":{"enabled":true},"rateLimits":{"limitId":"codex","primary":{"usedPercent":42,"futureWindowField":"ignored"},"rateLimitReachedType":"future_limit_reason","futureSnapshotField":17}}}"#
+        guard let state = AppServerLimitStateReader.decodeRateLimitState(from: limits) else {
+            throw LimitRingsTestError.failed("expected unknown rate-limit fields to be ignored")
+        }
+        try expect(state.primary?.remainingPercent == 58, "expected known rate-limit values with optional fields absent")
+        try expect(state.reachedType == "future_limit_reason", "expected unknown reached reason to remain read-only text")
+
+        let usage = #"{"id":2,"result":{"summary":{"currentStreakDays":2,"futureSummaryField":99},"dailyUsageBuckets":null,"futureUsageField":"ignored"}}"#
+        guard let snapshot = AppServerAccountUsageReader.decodeAccountUsage(from: usage) else {
+            throw LimitRingsTestError.failed("expected unknown usage fields to be ignored")
+        }
+        try expect(snapshot.buckets.isEmpty, "expected optional usage buckets to remain empty")
+        try expect(snapshot.summary?.currentStreakDays == 2, "expected known usage summary with unknown fields")
     }
 
     private static func testNotificationTransitionsAndDedupe() throws {
