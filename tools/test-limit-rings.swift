@@ -19,6 +19,9 @@ struct LimitRingsTests {
             try testCodexCLIPathsCoverCurrentChatGPTAppAndPath()
             try testAppServerRateLimitDecode()
             try testSparseRateLimitMergePreservesSnapshotMetadata()
+            try testAdaptiveReconcileAndSingleInFlightGate()
+            try testBufferedSparseUpdatesReapplyAfterFullSnapshot()
+            try testRateLimitDisplaySignatureTracksVisibleValues()
             try testReconnectBackoffIsBounded()
             try testAccountUsageDecodeAndFourteenDayNormalization()
             try testAccountUsageEmptyAndAccessibleBars()
@@ -99,6 +102,102 @@ struct LimitRingsTests {
         try expect(merged.rateLimits.secondary?.usedPercent == 40, "expected sparse merge to preserve secondary window")
         try expect(merged.rateLimits.credits?.balance == "10", "expected sparse merge to preserve nullable account metadata")
         try expect(merged.rateLimitResetCredits?.availableCount == 2, "expected snapshot-only reset credits to remain")
+    }
+
+    private static func testAdaptiveReconcileAndSingleInFlightGate() throws {
+        let now = Date(timeIntervalSince1970: 10_000)
+        try expect(!shouldRunLiveReconcile(lastObservedAt: nil, now: now, interval: 120, isConnected: true), "expected reconcile to wait for a successful observation")
+        try expect(!shouldRunLiveReconcile(lastObservedAt: now.addingTimeInterval(-119), now: now, interval: 120, isConnected: true), "expected reconcile to wait until 120 seconds")
+        try expect(shouldRunLiveReconcile(lastObservedAt: now.addingTimeInterval(-120), now: now, interval: 120, isConnected: true), "expected reconcile at the 120-second boundary")
+        try expect(!shouldRunLiveReconcile(lastObservedAt: now.addingTimeInterval(-121), now: now, interval: 120, isConnected: false), "expected reconcile to remain disabled while disconnected")
+
+        var gate = RateLimitRequestGate()
+        guard let first = gate.begin() else {
+            throw LimitRingsTestError.failed("expected the first full read to start")
+        }
+        try expect(gate.inFlight, "expected full read gate to report in-flight")
+        try expect(gate.begin() == nil, "expected manual and scheduled reads to coalesce")
+        try expect(
+            coalescedRateLimitRequestOrigin(current: .scheduledFullSync, incoming: .manualFullSync) == .manualFullSync,
+            "expected a coalesced manual refresh to remain visible as the full-sync path"
+        )
+        try expect(
+            coalescedRateLimitRequestOrigin(current: .manualFullSync, incoming: .scheduledFullSync) == .manualFullSync,
+            "expected a scheduled reconcile not to downgrade a coalesced manual refresh"
+        )
+        try expect(!gate.complete(token: first + 1), "expected a mismatched completion token to be ignored")
+        try expect(gate.complete(token: first), "expected the active full read to complete")
+        guard let second = gate.begin() else {
+            throw LimitRingsTestError.failed("expected a later full read to start")
+        }
+        gate.cancel()
+        try expect(!gate.inFlight && !gate.isCurrent(second), "expected timeout cancellation to invalidate the active request")
+    }
+
+    private static func testBufferedSparseUpdatesReapplyAfterFullSnapshot() throws {
+        let full = AppServerRateLimitResult(
+            rateLimits: AppServerRateLimitSnapshot(
+                limitId: "codex",
+                limitName: "Codex",
+                primary: AppServerRateLimitWindow(usedPercent: 20, windowDurationMins: 300, resetsAt: 1000),
+                secondary: AppServerRateLimitWindow(usedPercent: 40, windowDurationMins: 10080, resetsAt: 2000),
+                credits: AppServerCreditsSnapshot(hasCredits: true, unlimited: false, balance: "10"),
+                individualLimit: nil,
+                planType: "pro",
+                rateLimitReachedType: nil
+            ),
+            rateLimitsByLimitId: nil,
+            rateLimitResetCredits: AppServerRateLimitResetCreditsSummary(availableCount: 2)
+        )
+        let buffered = [25.0, 30.0].map { used in
+            AppServerRateLimitSnapshot(
+                limitId: nil,
+                limitName: nil,
+                primary: AppServerRateLimitWindow(usedPercent: used, windowDurationMins: nil, resetsAt: nil),
+                secondary: nil,
+                credits: nil,
+                individualLimit: nil,
+                planType: nil,
+                rateLimitReachedType: used == 30 ? "rate_limit_reached" : nil
+            )
+        }
+        let merged = buffered.reduce(full, { $0.mergingSparse($1) })
+        try expect(merged.rateLimits.primary?.usedPercent == 30, "expected the newest buffered sparse value after full sync")
+        try expect(merged.rateLimits.primary?.windowDurationMins == 300, "expected full snapshot metadata to survive buffered sparse updates")
+        try expect(merged.rateLimits.secondary?.usedPercent == 40, "expected untouched secondary data to survive buffered sparse updates")
+        try expect(merged.rateLimits.credits?.balance == "10", "expected credits to survive buffered sparse updates")
+        try expect(merged.rateLimitResetCredits?.availableCount == 2, "expected reset credits to survive buffered sparse updates")
+        try expect(merged.rateLimits.rateLimitReachedType == "rate_limit_reached", "expected buffered reached reason to reapply")
+    }
+
+    private static func testRateLimitDisplaySignatureTracksVisibleValues() throws {
+        let base = LimitState(
+            planType: "pro",
+            primary: LimitBucket(usedPercent: 20, windowMinutes: 300, resetAt: 1000),
+            secondary: nil,
+            additional: [],
+            credits: LimitCredits(hasCredits: true, unlimited: false, balance: "10"),
+            individualLimit: SpendControlLimit(limit: "100", used: "20", remainingPercent: 80, resetsAt: 2000),
+            reachedType: nil,
+            resetCreditsAvailable: 2,
+            observedAt: Date(timeIntervalSince1970: 1),
+            source: "app-server"
+        )
+        var laterObservation = base
+        laterObservation.observedAt = Date(timeIntervalSince1970: 2)
+        try expect(rateLimitDisplaySignature(base) == rateLimitDisplaySignature(laterObservation), "expected observation time and source not to count as a displayed value change")
+
+        var creditChange = base
+        creditChange.credits?.unlimited = true
+        try expect(rateLimitDisplaySignature(base) != rateLimitDisplaySignature(creditChange), "expected visible credit metadata to change the signature")
+
+        var spendChange = base
+        spendChange.individualLimit?.used = "25"
+        try expect(rateLimitDisplaySignature(base) != rateLimitDisplaySignature(spendChange), "expected visible spend-control values to change the signature")
+
+        var resetChange = base
+        resetChange.resetCreditsAvailable = 1
+        try expect(rateLimitDisplaySignature(base) != rateLimitDisplaySignature(resetChange), "expected visible reset-credit count to change the signature")
     }
 
     private static func testReconnectBackoffIsBounded() throws {

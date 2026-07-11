@@ -58,6 +58,7 @@ struct LimitState {
 }
 
 private let limitStatePollInterval: TimeInterval = 20.0
+private let liveRateLimitReconcileInterval: TimeInterval = 120.0
 private let dailyUsageRefreshInterval: TimeInterval = 15 * 60
 private let dailyUsageDisplayCount = 14
 private let appServerReconnectMaximumDelay: TimeInterval = 30
@@ -80,6 +81,84 @@ private func localized(_ key: String, fallback: String) -> String {
 
 func notificationsEnabledFromStoredValue(_ value: Any?) -> Bool {
     (value as? Bool) ?? false
+}
+
+enum RateLimitUpdateOrigin: String, Equatable {
+    case initialFullSync
+    case liveNotification
+    case scheduledFullSync
+    case manualFullSync
+    case fallback
+}
+
+func coalescedRateLimitRequestOrigin(
+    current: RateLimitUpdateOrigin,
+    incoming: RateLimitUpdateOrigin
+) -> RateLimitUpdateOrigin {
+    if current == .manualFullSync || incoming == .manualFullSync {
+        return .manualFullSync
+    }
+    return current
+}
+
+struct RateLimitRequestGate {
+    private(set) var inFlight = false
+    private(set) var token = 0
+
+    mutating func begin() -> Int? {
+        guard !inFlight else { return nil }
+        token += 1
+        inFlight = true
+        return token
+    }
+
+    mutating func complete(token: Int) -> Bool {
+        guard inFlight, self.token == token else { return false }
+        inFlight = false
+        return true
+    }
+
+    func isCurrent(_ token: Int) -> Bool {
+        inFlight && self.token == token
+    }
+
+    mutating func cancel() {
+        inFlight = false
+        token += 1
+    }
+}
+
+func shouldRunLiveReconcile(
+    lastObservedAt: Date?,
+    now: Date = Date(),
+    interval: TimeInterval = liveRateLimitReconcileInterval,
+    isConnected: Bool
+) -> Bool {
+    guard isConnected, let lastObservedAt else { return false }
+    return now.timeIntervalSince(lastObservedAt) >= interval
+}
+
+func rateLimitDisplaySignature(_ state: LimitState) -> String {
+    func bucket(_ value: LimitBucket?) -> String {
+        guard let value else { return "-" }
+        return "\(value.usedPercent)|\(value.windowMinutes ?? -1)|\(value.resetAt ?? -1)"
+    }
+    func credits(_ value: LimitCredits?) -> String {
+        guard let value else { return "-" }
+        return "\(value.hasCredits)|\(value.unlimited)|\(value.balance ?? "-")"
+    }
+    func spend(_ value: SpendControlLimit?) -> String {
+        guard let value else { return "-" }
+        return "\(value.limit)|\(value.used)|\(value.remainingPercent)|\(value.resetsAt)"
+    }
+    let additional = state.additional.map {
+        "\($0.id)|\($0.name)|\(bucket($0.primary))|\(bucket($0.secondary))|\(credits($0.credits))|\(spend($0.individualLimit))|\($0.reachedType ?? "-")"
+    }.joined(separator: ";")
+    return [
+        state.planType ?? "-", bucket(state.primary), bucket(state.secondary), additional,
+        credits(state.credits), spend(state.individualLimit),
+        state.reachedType ?? "-", state.resetCreditsAvailable?.description ?? "-"
+    ].joined(separator: "#")
 }
 
 enum LimitNotificationBand: Int, Equatable {
@@ -157,7 +236,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.0"
+    var version = "1.0.1"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -834,7 +913,7 @@ private struct AppServerRateLimitsUpdatedNotification: Decodable {
 }
 
 final class AppServerLiveClient {
-    typealias RateLimitHandler = (LimitState) -> Void
+    typealias RateLimitHandler = (LimitState, RateLimitUpdateOrigin) -> Void
     typealias UsageHandler = (DailyUsageSnapshot?, String?) -> Void
     typealias ConnectionHandler = (Bool, String?) -> Void
     typealias CLIHandler = (String, String?) -> Void
@@ -849,6 +928,9 @@ final class AppServerLiveClient {
     private var stderr: Pipe?
     private var buffer = ""
     private var rateLimitResult: AppServerRateLimitResult?
+    private var rateLimitRequestGate = RateLimitRequestGate()
+    private var pendingRateLimitOrigin: RateLimitUpdateOrigin = .initialFullSync
+    private var pendingSparseRateLimits: [AppServerRateLimitSnapshot] = []
     private var reconnectAttempt = 0
     private var connectionGeneration = 0
     private var identifiedCLIPath: String?
@@ -880,9 +962,9 @@ final class AppServerLiveClient {
         }
     }
 
-    func requestRateLimits() {
+    func requestRateLimits(origin: RateLimitUpdateOrigin) {
         queue.async { [weak self] in
-            self?.sendRateLimitRequest()
+            self?.sendRateLimitRequest(origin: origin)
         }
     }
 
@@ -973,12 +1055,16 @@ final class AppServerLiveClient {
         guard let data = line.data(using: .utf8) else { return }
         if let envelope = try? decoder.decode(AppServerMethodEnvelope.self, from: data),
            envelope.method == "account/rateLimits/updated",
-           let notification = try? decoder.decode(AppServerRateLimitsUpdatedNotification.self, from: data),
-           let current = rateLimitResult {
-            let merged = current.mergingSparse(notification.params.rateLimits)
-            rateLimitResult = merged
-            if let state = merged.toLimitState(observedAt: Date()) {
-                onRateLimitState?(state)
+           let notification = try? decoder.decode(AppServerRateLimitsUpdatedNotification.self, from: data) {
+            if rateLimitRequestGate.inFlight {
+                pendingSparseRateLimits.append(notification.params.rateLimits)
+            }
+            if let current = rateLimitResult {
+                let merged = current.mergingSparse(notification.params.rateLimits)
+                rateLimitResult = merged
+                if let state = merged.toLimitState(observedAt: Date()) {
+                    onRateLimitState?(state, .liveNotification)
+                }
             }
             return
         }
@@ -989,23 +1075,31 @@ final class AppServerLiveClient {
         case 1:
             do {
                 try write(AppServerInitializedNotification())
-                sendRateLimitRequest()
+                sendRateLimitRequest(origin: .initialFullSync)
                 sendUsageRequest()
             } catch {
                 failConnection("request_write_failed")
             }
         case 2:
+            let requestToken = rateLimitRequestGate.token
+            guard rateLimitRequestGate.complete(token: requestToken) else { return }
             guard let decoded = try? decoder.decode(AppServerRateLimitReadResponse.self, from: data),
-                  let result = decoded.result,
-                  let state = result.toLimitState(observedAt: Date()) else {
+                  let result = decoded.result else {
+                pendingSparseRateLimits.removeAll()
                 failConnection("invalid_rate_limit_response")
                 return
             }
-            rateLimitResult = result
+            let mergedResult = pendingSparseRateLimits.reduce(result, { $0.mergingSparse($1) })
+            pendingSparseRateLimits.removeAll()
+            guard let state = mergedResult.toLimitState(observedAt: Date()) else {
+                failConnection("invalid_rate_limit_response")
+                return
+            }
+            rateLimitResult = mergedResult
             ready = true
             reconnectAttempt = 0
             onConnectionChanged?(true, nil)
-            onRateLimitState?(state)
+            onRateLimitState?(state, pendingRateLimitOrigin)
         case 3:
             guard let decoded = try? decoder.decode(AppServerAccountUsageReadResponse.self, from: data),
                   let result = decoded.result else {
@@ -1025,12 +1119,31 @@ final class AppServerLiveClient {
         }
     }
 
-    private func sendRateLimitRequest() {
+    private func sendRateLimitRequest(origin: RateLimitUpdateOrigin) {
         guard process?.isRunning == true else { return }
+        guard let requestToken = rateLimitRequestGate.begin() else {
+            pendingRateLimitOrigin = coalescedRateLimitRequestOrigin(
+                current: pendingRateLimitOrigin,
+                incoming: origin
+            )
+            return
+        }
+        pendingRateLimitOrigin = origin
+        pendingSparseRateLimits.removeAll()
+        let generation = connectionGeneration
         do {
             try write(AppServerRateLimitReadRequest())
         } catch {
+            rateLimitRequestGate.cancel()
             failConnection("rate_limit_write_failed")
+            return
+        }
+        queue.asyncAfter(deadline: .now() + appServerLimitStateTimeout) { [weak self] in
+            guard let self,
+                  generation == self.connectionGeneration,
+                  self.rateLimitRequestGate.isCurrent(requestToken) else { return }
+            self.rateLimitRequestGate.cancel()
+            self.failConnection("rate_limit_timeout")
         }
     }
 
@@ -1077,6 +1190,8 @@ final class AppServerLiveClient {
     }
 
     private func closeCurrentProcess() {
+        rateLimitRequestGate.cancel()
+        pendingSparseRateLimits.removeAll()
         stdout?.fileHandleForReading.readabilityHandler = nil
         stderr?.fileHandleForReading.readabilityHandler = nil
         stdin?.fileHandleForWriting.closeFile()
@@ -1910,6 +2025,7 @@ final class LimitRingsApp: NSObject {
     private var notificationsItem: NSMenuItem?
     private var stateTimer: Timer?
     private var usageTimer: Timer?
+    private var rateLimitReconcileTimer: Timer?
     private var frameTimer: Timer?
     private var animationTimer: Timer?
     private var dragFollowTimer: Timer?
@@ -1938,6 +2054,12 @@ final class LimitRingsApp: NSObject {
     private var dailyUsageSnapshot: DailyUsageSnapshot?
     private var dailyUsageErrorCode: String?
     private var lastRateLimitObservedAt: Date?
+    private var lastLiveRateLimitUpdateAt: Date?
+    private var lastFullRateLimitSyncAt: Date?
+    private var lastFullRateLimitSyncOrigin: RateLimitUpdateOrigin?
+    private var lastRateLimitValueChangeAt: Date?
+    private var lastRateLimitValueChangeOrigin: RateLimitUpdateOrigin?
+    private var lastRateLimitSignature: String?
     private var lastConnectionErrorCode: String?
     private var codexCLISourceName = "not-found"
     private var codexCLIVersion: String?
@@ -1975,6 +2097,7 @@ final class LimitRingsApp: NSObject {
     deinit {
         stateTimer?.invalidate()
         usageTimer?.invalidate()
+        rateLimitReconcileTimer?.invalidate()
         frameTimer?.invalidate()
         animationTimer?.invalidate()
         dragFollowTimer?.invalidate()
@@ -2022,7 +2145,7 @@ final class LimitRingsApp: NSObject {
             let state = self.stateReader.readLatest()
             DispatchQueue.main.async {
                 if shouldApplyPolledLimitState(isLiveConnected: self.appServerConnected) {
-                    self.applyLimitState(state)
+                    self.applyLimitState(state, origin: .fallback)
                 }
                 self.stateReadInFlight = false
             }
@@ -2054,9 +2177,9 @@ final class LimitRingsApp: NSObject {
                 self.updateConnectionHealthMenu()
             }
         }
-        liveClient.onRateLimitState = { [weak self] state in
+        liveClient.onRateLimitState = { [weak self] state, origin in
             DispatchQueue.main.async {
-                self?.applyLimitState(state)
+                self?.applyLimitState(state, origin: origin)
             }
         }
         liveClient.onUsage = { [weak self] snapshot, errorCode in
@@ -2075,16 +2198,43 @@ final class LimitRingsApp: NSObject {
         }
     }
 
-    private func applyLimitState(_ state: LimitState) {
+    private func applyLimitState(_ state: LimitState, origin: RateLimitUpdateOrigin) {
         currentLimitSource = state.source
         if state.source != "none" {
             lastRateLimitObservedAt = state.observedAt
+        }
+        if state.source == "app-server" {
+            switch origin {
+            case .liveNotification:
+                lastLiveRateLimitUpdateAt = state.observedAt
+            case .initialFullSync, .scheduledFullSync, .manualFullSync:
+                lastFullRateLimitSyncAt = state.observedAt
+                lastFullRateLimitSyncOrigin = origin
+            case .fallback:
+                break
+            }
+            scheduleAdaptiveRateLimitReconcile()
+        }
+        let signature = rateLimitDisplaySignature(state)
+        if lastRateLimitSignature != signature {
+            lastRateLimitValueChangeAt = Date()
+            lastRateLimitValueChangeOrigin = origin
+            lastRateLimitSignature = signature
         }
         ringView.state = state
         updateSummaryMenuItem()
         updateLimitDetailsMenu()
         processNotifications(for: state)
         updateConnectionHealthMenu()
+    }
+
+    private func scheduleAdaptiveRateLimitReconcile() {
+        rateLimitReconcileTimer?.invalidate()
+        rateLimitReconcileTimer = Timer.scheduledTimer(withTimeInterval: liveRateLimitReconcileInterval, repeats: false) { [weak self] _ in
+            guard let self,
+                  shouldRunLiveReconcile(lastObservedAt: self.lastRateLimitObservedAt, isConnected: self.appServerConnected) else { return }
+            self.liveClient.requestRateLimits(origin: .scheduledFullSync)
+        }
     }
 
     private func requestDailyUsage() {
@@ -2523,6 +2673,33 @@ final class LimitRingsApp: NSObject {
             waitingFallback: "Rate-limit update pending",
             to: menu
         )
+        appendCadenceRow(
+            observedAt: lastLiveRateLimitUpdateAt,
+            key: "connection.lastLiveUpdate",
+            fallback: "Last live update: %@",
+            waitingKey: "connection.lastLiveWaiting",
+            waitingFallback: "Live update not observed yet",
+            origin: nil,
+            to: menu
+        )
+        appendCadenceRow(
+            observedAt: lastFullRateLimitSyncAt,
+            key: "connection.lastFullSync",
+            fallback: "Last full sync: %@ · %@",
+            waitingKey: "connection.lastFullWaiting",
+            waitingFallback: "Full sync pending",
+            origin: lastFullRateLimitSyncOrigin,
+            to: menu
+        )
+        appendCadenceRow(
+            observedAt: lastRateLimitValueChangeAt,
+            key: "connection.lastValueChange",
+            fallback: "Last value change: %@ · %@",
+            waitingKey: "connection.lastValueWaiting",
+            waitingFallback: "Value change not observed yet",
+            origin: lastRateLimitValueChangeOrigin,
+            to: menu
+        )
         appendFreshnessRow(
             observedAt: dailyUsageSnapshot?.observedAt,
             maxAge: usageFreshnessMaxAge,
@@ -2569,6 +2746,33 @@ final class LimitRingsApp: NSObject {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
         menu.addItem(item)
+    }
+
+    private func appendCadenceRow(
+        observedAt: Date?, key: String, fallback: String,
+        waitingKey: String, waitingFallback: String,
+        origin: RateLimitUpdateOrigin?, to menu: NSMenu
+    ) {
+        guard let observedAt else {
+            appendDisabledMenuItem(localized(waitingKey, fallback: waitingFallback), to: menu)
+            return
+        }
+        let time = DateFormatter.localizedString(from: observedAt, dateStyle: .none, timeStyle: .short)
+        if let origin {
+            appendDisabledMenuItem(String(format: localized(key, fallback: fallback), time, localizedRateLimitOrigin(origin)), to: menu)
+        } else {
+            appendDisabledMenuItem(String(format: localized(key, fallback: fallback), time), to: menu)
+        }
+    }
+
+    private func localizedRateLimitOrigin(_ origin: RateLimitUpdateOrigin) -> String {
+        switch origin {
+        case .initialFullSync: return localized("cadence.origin.initial", fallback: "Initial")
+        case .liveNotification: return localized("cadence.origin.live", fallback: "Live")
+        case .scheduledFullSync: return localized("cadence.origin.scheduled", fallback: "Scheduled")
+        case .manualFullSync: return localized("cadence.origin.manual", fallback: "Manual")
+        case .fallback: return localized("cadence.origin.fallback", fallback: "Fallback")
+        }
     }
 
     private func localizedFreshness(_ freshness: DataFreshnessState) -> String {
@@ -2771,7 +2975,7 @@ final class LimitRingsApp: NSObject {
 
     @objc private func refreshNow(_ sender: NSMenuItem) {
         if appServerConnected {
-            liveClient.requestRateLimits()
+            liveClient.requestRateLimits(origin: .manualFullSync)
         } else {
             updateState()
         }
