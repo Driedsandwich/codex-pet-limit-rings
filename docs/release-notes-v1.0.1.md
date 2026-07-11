@@ -1,6 +1,6 @@
-# Codex Pet Limit Rings 1.0.1 Candidate
+# Codex Pet Limit Rings 1.0.1
 
-Version 1.0.1 is an unreleased maintenance candidate that reduces perceived rate-limit update delay without expanding the app's data or permission boundary.
+Version 1.0.1 improves the cadence of live rate-limit updates without expanding the app's data or permission boundary.
 
 ## Highlights
 
@@ -14,11 +14,21 @@ Version 1.0.1 is an unreleased maintenance candidate that reduces perceived rate
 
 - Uses only stable `account/rateLimits/read` and `account/rateLimits/updated` plus existing in-memory connection state.
 - Cadence observations remain memory-only and disappear when the app exits.
-- No persistent logs, IPC, new permission, new notification type, account mutation, thread API, or experimental API.
-- Existing notification thresholds remain opt-in and deduplicated.
+- No persistent diagnostics, IPC, new permission, new notification type, account mutation, thread API, or experimental API method.
+- Existing notification thresholds remain opt-in, default to off, and suppress duplicate notifications.
 
-## Candidate Verification
+## Verification
 
 - Unit coverage includes the 120-second boundary, single in-flight gate, timeout invalidation, sparse/full race, visible-value signatures, freshness, unknown fields, notification deduplication, and English/Japanese resource parity.
-- Package gates target Apple silicon `arm64` and macOS 15.0 or later on macOS 15 and macOS 26 CI.
-- The published v1.0.0 artifact remains the rollback baseline until v1.0.1 is formally released.
+- macOS 15 and macOS 26 CI passed build, all unit tests, privacy scan, package verification, and the published v1.0.0 artifact smoke test.
+- The published v1.0.1 package passed checksum, ad-hoc signature, arm64 architecture, macOS 15.0 deployment target, English/Japanese resources, preview execution, and privacy-safe diagnostics.
+
+## Compatibility
+
+- Apple silicon `arm64`.
+- macOS 15.0 or later.
+- Ad-hoc signed and not notarized.
+- Release: [`v1.0.1`](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.1).
+- Release target: `586dfc6fa74cf8f5d0fcc4149011e2f5664f08d4`.
+- ZIP SHA-256: `d450b7e9d64f001663e4ef82af3f2517bb434918676c6531337f937a12be9705`.
+- Published artifact smoke test passed checksum, signature, arm64 architecture, macOS 15.0 deployment target, English/Japanese resources, preview execution, and privacy-safe diagnostics.

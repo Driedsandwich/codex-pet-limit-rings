@@ -4,6 +4,10 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
+No changes yet.
+
+## 1.0.1 - 2026-07-11
+
 ### Live Update Cadence
 
 - Reconcile the full read-only rate-limit snapshot after 120 seconds without a successful live observation while app-server remains connected.
