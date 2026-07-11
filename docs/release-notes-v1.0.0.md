@@ -1,4 +1,4 @@
-# Codex Pet Limit Rings 1.0.0 Candidate
+# Codex Pet Limit Rings 1.0.0
 
 Version 1.0.0 makes the provenance and freshness of displayed data inspectable without expanding the app's data boundary.
 
@@ -21,4 +21,7 @@ Version 1.0.0 makes the provenance and freshness of displayed data inspectable w
 - Apple silicon `arm64`.
 - macOS 15.0 or later.
 - Ad-hoc signed and not notarized.
-- The candidate is not yet a GitHub Release.
+- Release: [`v1.0.0`](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.0).
+- Release target: `84f4f4273a671f05ae0d0908b58d6e0cb8c2cd15`.
+- ZIP SHA-256: `21d1eb306b3b3211c1911636e6cf3544bf94064af160b6f061949595b369229a`.
+- Published artifact smoke test passed checksum, signature, arm64 architecture, macOS 15.0 deployment target, English/Japanese resources, preview execution, and privacy-safe diagnostics.
