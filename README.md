@@ -18,7 +18,7 @@ The rings are designed to be glanceable:
 - Hovering over the pet or rings shows the exact percentages at the current ring endpoints.
 - A small menu-bar icon exposes all available limit buckets, credits, monthly spend controls, reset credits, and limit status without modifying the account.
 - A Daily Usage submenu shows the latest 14 account-usage days plus current and longest streaks, longest turn, peak day, and lifetime totals, refreshing every 15 minutes without storing usage history.
-- A Connection Health submenu shows the Codex CLI version, live/cached/local/reconnecting state, rate-limit and usage freshness, and privacy-safe failure reasons using text and symbols rather than color alone.
+- A Connection Health submenu shows the Codex CLI version, live/cached/local/reconnecting state, rate-limit and usage freshness, the last live/full/value-change cadence, and privacy-safe failure reasons using text and symbols rather than color alone.
 - Optional 25%, 10%, and recovery notifications are off by default and request macOS permission only when enabled.
 - Reduced Motion, Increase Contrast, Differentiate Without Color, English, and Japanese are supported.
 
@@ -41,6 +41,8 @@ The published v0.8.0 release keeps one app-server connection open for immediate 
 The published v0.9.0 release adds two aggregate usage milestones and explicit connection-health status using only fields and state already held in memory. It adds no thread data, persistence, notification, permission, or account mutation.
 
 The published v1.0.0 release strengthens compatibility and data trust. It identifies the active Codex CLI version, distinguishes live/cached/local data, labels rate-limit and usage freshness, and classifies connection failures without exposing paths or account data. It adds no request, persistence, permission, notification, or mutation path.
+
+The unreleased v1.0.1 candidate adds an adaptive full-snapshot reconcile only when a connected app-server has produced no successful rate-limit observation for 120 seconds. Manual and scheduled reads coalesce, sparse live updates win races with full responses, and cadence timestamps remain memory-only.
 
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
 

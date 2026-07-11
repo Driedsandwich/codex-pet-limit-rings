@@ -11,7 +11,7 @@ The rings are pet-agnostic. They work with any pet Codex displays because the ap
 - `Refresh Now` rereads usage and pet-position state.
 - `Limit Details` lists every returned limit bucket plus read-only credit, monthly limit, reached-status, and reset-credit summaries.
 - `Daily Usage` shows up to 14 recent daily token buckets plus current/longest streak, longest turn, peak day, and lifetime totals as localized text-labelled rows and refreshes every 15 minutes.
-- `Connection Health` shows the sanitized Codex CLI version, explicit live/cached/local/reconnecting state, separate rate-limit and usage freshness, and privacy-safe failure reasons.
+- `Connection Health` shows the sanitized Codex CLI version, explicit live/cached/local/reconnecting state, separate rate-limit and usage freshness, the last live/full/value-change cadence, and privacy-safe failure reasons.
 - `Limit Notifications` is off by default. Enabling it is the only action that requests macOS notification permission.
 - Hovering over the ring or pet shows exact remaining percentages at the arc endpoints.
 - Dragging the pet makes the rings follow the gesture immediately while Codex persists the new position.
@@ -32,13 +32,15 @@ The app reads live usage first, then local files as support or fallback:
 
 The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed. App-server disconnects use bounded exponential reconnect delays; the 20-second local rate-limit poll runs only while disconnected.
 
+While app-server is connected, sparse notifications remain the normal update path. If no successful rate-limit observation arrives for 120 seconds, the app performs one read-only `account/rateLimits/read` reconcile. Manual and scheduled full reads share a single in-flight gate and a five-second timeout. Sparse notifications received while a full read is pending are displayed immediately, buffered, and reapplied to the returned full snapshot so older full data cannot overwrite a newer live value. Connection Health keeps the latest live-notification, full-sync, and displayed-value-change times and origins in memory only.
+
 During pet drags, the live overlay window is matched to the `com.openai.codex` application bundle rather than a fixed visible process name. This supports both older builds presented as `Codex` and current builds presented as `ChatGPT` without matching unrelated ChatGPT wrappers.
 
 No OpenAI API key is required. The app no longer reads ChatGPT bearer tokens from `auth.json`. The menu summary distinguishes `App Server`, a recent in-memory `Cached` snapshot, and the `Local` SQLite fallback. Expired values are rejected.
 
 The full `account/rateLimits/read` snapshot is decoded read-only. The app can display `rateLimitsByLimitId`, credit availability and balance, individual monthly spend control, limit-reached reason, and the available reset-credit count. It never calls `account/rateLimitResetCredit/consume` and does not mutate the account.
 
-Daily account usage has remained read-only since v0.7.0, is refreshed every 15 minutes, and is never persisted. Version 0.9.0 displays the stable response's aggregate current/longest streak, longest turn, peak-day, and lifetime fields. Version 1.0.0 adds only derived compatibility information: the bounded Codex CLI version, current source, separate in-memory observation times, freshness labels, and a small safe failure category. Per-thread usage remains excluded: the app does not subscribe to `thread/tokenUsage/updated`, resume or fork threads, inspect prompts, retain thread identifiers, or parse SQLite/JSONL for usage.
+Daily account usage has remained read-only since v0.7.0, is refreshed every 15 minutes, and is never persisted. Version 0.9.0 displays the stable response's aggregate current/longest streak, longest turn, peak-day, and lifetime fields. Version 1.0.0 adds only derived compatibility information: the bounded Codex CLI version, current source, separate in-memory observation times, freshness labels, and a small safe failure category. The unreleased v1.0.1 candidate adds only bounded full-snapshot reconciliation and memory-only cadence observations. Per-thread usage remains excluded: the app does not subscribe to `thread/tokenUsage/updated`, resume or fork threads, inspect prompts, retain thread identifiers, or parse SQLite/JSONL for usage.
 
 The app discovers Codex CLI installations from explicit environment overrides, the current `ChatGPT.app` bundle, older `Codex.app` bundles, Homebrew locations, and `PATH`. `--diagnose` reports compatibility state as JSON without emitting tokens or user-specific paths.
 

@@ -54,6 +54,12 @@ if grep -En 'UserDefaults[^\n]*dailyUsage|dailyUsage[^\n]*UserDefaults|threadId|
   exit 1
 fi
 
+if grep -En 'UserDefaults[^\n]*(lastLiveRateLimitUpdate|lastFullRateLimitSync|lastRateLimitValueChange|rateLimitSignature)' \
+  "$ROOT/tools/codex-pet-limit-rings.swift"; then
+  echo "release verification failed: update-cadence diagnostics must remain memory-only" >&2
+  exit 1
+fi
+
 if find "$ROOT" -type f \
   ! -path "$ROOT/.git/*" \
   ! -path "$ROOT/tmp/*" \
