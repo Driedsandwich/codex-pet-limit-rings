@@ -42,6 +42,8 @@ The v0.7.0 daily usage view is memory-only, so rollback requires no usage databa
 
 The v0.8.0 live connection and usage summaries are also memory-only. Rolling back to v0.7.0 requires restoring only the prior app, LaunchAgent, preferences, and Skill backup.
 
+The v0.9.0 milestone and connection-health rows are also memory-only and add no preference keys. Rolling back to v0.8.0 requires restoring only the prior app, LaunchAgent, preferences, and Skill backup.
+
 ## Verify The Restore
 
 ```bash
