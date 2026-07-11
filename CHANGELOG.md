@@ -4,6 +4,10 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
+No changes yet.
+
+## 0.9.0 - 2026-07-11
+
 ### Usage Milestones & Connection Health
 
 - Show longest streak and longest running turn from the existing memory-only aggregate usage summary.
