@@ -4,7 +4,14 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
-No changes yet.
+### Compatibility & Data Trust
+
+- Show the active Codex CLI version and explicit live, cached, local, or reconnecting source state.
+- Show separate rate-limit and usage observation times with current, stale, or waiting labels.
+- Classify connection failures into privacy-safe localized reasons without exposing process output or local paths.
+- Tolerate unknown response fields, unknown reached-reason strings, and missing optional values through fixture coverage.
+- Continue excluding thread/turn identifiers, per-thread usage, durable usage storage, reset consumption, account mutation, experimental APIs, and new notifications.
+- Release CI now smoke-tests the published v0.9.0 artifact on macOS 15 and macOS 26.
 
 ## 0.9.0 - 2026-07-11
 

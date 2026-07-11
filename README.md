@@ -18,7 +18,7 @@ The rings are designed to be glanceable:
 - Hovering over the pet or rings shows the exact percentages at the current ring endpoints.
 - A small menu-bar icon exposes all available limit buckets, credits, monthly spend controls, reset credits, and limit status without modifying the account.
 - A Daily Usage submenu shows the latest 14 account-usage days plus current and longest streaks, longest turn, peak day, and lifetime totals, refreshing every 15 minutes without storing usage history.
-- A Connection Health submenu shows live, reconnecting, or poll-fallback state plus the last in-memory usage update time using text and symbols rather than color alone.
+- A Connection Health submenu shows the Codex CLI version, live/cached/local/reconnecting state, rate-limit and usage freshness, and privacy-safe failure reasons using text and symbols rather than color alone.
 - Optional 25%, 10%, and recovery notifications are off by default and request macOS permission only when enabled.
 - Reduced Motion, Increase Contrast, Differentiate Without Color, English, and Japanese are supported.
 
@@ -39,6 +39,8 @@ The published v0.7.0 release adds memory-only Daily Usage Insights through stabl
 The published v0.8.0 release keeps one app-server connection open for immediate sparse rate-limit updates, reconnects with bounded backoff, and adds current-streak, peak-day, and lifetime usage summaries without expanding the privacy boundary.
 
 The published v0.9.0 release adds two aggregate usage milestones and explicit connection-health status using only fields and state already held in memory. It adds no thread data, persistence, notification, permission, or account mutation.
+
+The v1.0.0 candidate strengthens compatibility and data trust. It identifies the active Codex CLI version, distinguishes live/cached/local data, labels rate-limit and usage freshness, and classifies connection failures without exposing paths or account data. It adds no request, persistence, permission, notification, or mutation path.
 
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
 
