@@ -69,6 +69,7 @@ private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
 private let notificationsEnabledDefaultsKey = "CodexPetLimitRings.notificationsEnabled"
 private let notificationBandsDefaultsKey = "CodexPetLimitRings.notificationBands"
 private let appServerLimitStateTimeout: TimeInterval = 5.0
+private let codexCLIVersionTimeout: TimeInterval = 2.0
 private let limitStateFallbackMaxAge: TimeInterval = 30 * 60
 private let rateLimitFreshnessMaxAge: TimeInterval = 30 * 60
 private let usageFreshnessMaxAge: TimeInterval = 30 * 60
@@ -326,14 +327,19 @@ func normalizedCodexCLIVersion(_ output: String) -> String? {
 private func readCodexCLIVersion(at url: URL) -> String? {
     let process = Process()
     let output = Pipe()
+    let completed = DispatchSemaphore(value: 0)
     process.executableURL = url
     process.arguments = ["--version"]
     process.standardOutput = output
     process.standardError = Pipe()
+    process.terminationHandler = { _ in completed.signal() }
     do {
         try process.run()
-        process.waitUntilExit()
     } catch {
+        return nil
+    }
+    if completed.wait(timeout: .now() + codexCLIVersionTimeout) == .timedOut {
+        process.terminate()
         return nil
     }
     guard process.terminationStatus == 0 else { return nil }
