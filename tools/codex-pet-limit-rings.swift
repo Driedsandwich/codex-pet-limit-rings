@@ -93,11 +93,32 @@ private let appServerReconnectMaximumDelay: TimeInterval = 30
 private let petFrameFallbackPollInterval: TimeInterval = 2.0
 private let petFrameStateDebounceInterval: TimeInterval = 0.035
 private let dragFollowInterval: TimeInterval = 1.0 / 60.0
-private let dragLiveMismatchTolerance: CGFloat = 96.0
+let dragLiveMismatchTolerance: CGFloat = 96.0
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
 private let notificationsEnabledDefaultsKey = "CodexPetLimitRings.notificationsEnabled"
 private let notificationBandsDefaultsKey = "CodexPetLimitRings.notificationBands"
 private let appServerLimitStateTimeout: TimeInterval = 5.0
+
+func petDragLiveFrameIsClose(
+    _ liveFrame: CGRect,
+    to predictedFrame: CGRect,
+    minimumTolerance: CGFloat = dragLiveMismatchTolerance
+) -> Bool {
+    let dx = liveFrame.midX - predictedFrame.midX
+    let dy = liveFrame.midY - predictedFrame.midY
+    let tolerance = max(minimumTolerance, max(predictedFrame.width, predictedFrame.height) * 0.85)
+    return (dx * dx + dy * dy) <= tolerance * tolerance
+}
+
+func codexApplicationCanPresentPet(
+    bundleIdentifier: String?,
+    ownerName: String?,
+    isHidden: Bool,
+    isTerminated: Bool
+) -> Bool {
+    guard !isHidden, !isTerminated else { return false }
+    return bundleIdentifier == "com.openai.codex" || ownerName == "Codex"
+}
 private let codexCLIVersionTimeout: TimeInterval = 2.0
 private let limitStateFallbackMaxAge: TimeInterval = 30 * 60
 private let rateLimitFreshnessMaxAge: TimeInterval = 30 * 60
@@ -297,7 +318,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.3"
+    var version = "1.0.4"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -1493,12 +1514,21 @@ struct PetFramesTopLeft {
 
 final class PetFrameReader {
     private let globalStatePath: URL
+    private let liveOverlayProvider: ((CGRect, CGSize) -> CGRect?)?
 
-    init(globalStatePath: URL) {
+    init(
+        globalStatePath: URL,
+        liveOverlayProvider: ((CGRect, CGSize) -> CGRect?)? = nil
+    ) {
         self.globalStatePath = globalStatePath
+        self.liveOverlayProvider = liveOverlayProvider
     }
 
-    func readPetFramesTopLeft(preferLiveOverlay: Bool = false, liveReference: CGRect? = nil) -> PetFramesTopLeft? {
+    func readPetFramesTopLeft(
+        preferLiveOverlay: Bool = false,
+        requireLiveOverlay: Bool = false,
+        liveReference: CGRect? = nil
+    ) -> PetFramesTopLeft? {
         guard let data = try? Data(contentsOf: globalStatePath),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               isAvatarOverlayOpen(root),
@@ -1516,14 +1546,31 @@ final class PetFrameReader {
         }
 
         let persistedOverlay = CGRect(x: x, y: y, width: overlayWidth, height: overlayHeight)
-        let liveOverlay = preferLiveOverlay ? liveCodexOverlayBounds(matching: liveReference ?? persistedOverlay, expectedSize: persistedOverlay.size) : nil
+        let shouldReadLiveOverlay = preferLiveOverlay || requireLiveOverlay
+        let liveOverlay: CGRect?
+        if shouldReadLiveOverlay {
+            let reference = liveReference ?? persistedOverlay
+            if let liveOverlayProvider {
+                liveOverlay = liveOverlayProvider(reference, persistedOverlay.size)
+            } else {
+                liveOverlay = liveCodexOverlayBounds(matching: reference, expectedSize: persistedOverlay.size)
+            }
+        } else {
+            liveOverlay = nil
+        }
+        if requireLiveOverlay, liveOverlay == nil {
+            return nil
+        }
         let overlay = liveOverlay ?? persistedOverlay
         let mascot = CGRect(x: overlay.minX + left, y: overlay.minY + top, width: width, height: height)
         return PetFramesTopLeft(mascot: mascot, overlay: overlay, usedLiveOverlay: liveOverlay != nil)
     }
 
-    func readPetFrameTopLeft(preferLiveOverlay: Bool = false) -> CGRect? {
-        readPetFramesTopLeft(preferLiveOverlay: preferLiveOverlay)?.mascot
+    func readPetFrameTopLeft(preferLiveOverlay: Bool = false, requireLiveOverlay: Bool = false) -> CGRect? {
+        readPetFramesTopLeft(
+            preferLiveOverlay: preferLiveOverlay,
+            requireLiveOverlay: requireLiveOverlay
+        )?.mascot
     }
 
     private func isAvatarOverlayOpen(_ root: [String: Any]) -> Bool {
@@ -1581,15 +1628,16 @@ final class PetFrameReader {
     }
 
     private func isCodexWindow(_ window: [String: Any]) -> Bool {
-        if let ownerPID = window[kCGWindowOwnerPID as String] as? NSNumber,
-           let runningApplication = NSRunningApplication(processIdentifier: pid_t(ownerPID.int32Value)),
-           runningApplication.bundleIdentifier == "com.openai.codex" {
-            return true
+        let ownerName = window[kCGWindowOwnerName as String] as? String
+        let runningApplication = (window[kCGWindowOwnerPID as String] as? NSNumber).flatMap {
+            NSRunningApplication(processIdentifier: pid_t($0.int32Value))
         }
-
-        // Older standalone Codex builds exposed the owner name but could omit
-        // enough process metadata for bundle-identifier matching.
-        return (window[kCGWindowOwnerName as String] as? String) == "Codex"
+        return codexApplicationCanPresentPet(
+            bundleIdentifier: runningApplication?.bundleIdentifier,
+            ownerName: ownerName,
+            isHidden: runningApplication?.isHidden ?? false,
+            isTerminated: runningApplication?.isTerminated ?? false
+        )
     }
 
     private func liveOverlayScore(_ rect: CGRect, reference: CGRect, expectedSize: CGSize) -> CGFloat {
@@ -2390,7 +2438,11 @@ final class LimitRingsApp: NSObject {
         }
 
         let liveReference = preferLiveOverlay ? currentPetOverlayTopLeft : nil
-        guard let petFrames = frameReader.readPetFramesTopLeft(preferLiveOverlay: preferLiveOverlay, liveReference: liveReference) else {
+        guard let petFrames = frameReader.readPetFramesTopLeft(
+            preferLiveOverlay: preferLiveOverlay,
+            requireLiveOverlay: true,
+            liveReference: liveReference
+        ) else {
             currentPetFrameAppKit = nil
             currentPetOverlayTopLeft = nil
             currentPetOverlayFrameAppKit = nil
@@ -3186,7 +3238,7 @@ final class LimitRingsApp: NSObject {
            petFrames.usedLiveOverlay {
             let livePetFrame = appKitRectFromTopLeft(petFrames.mascot)
             if let predictedPetFrame {
-                guard dragLiveFrameIsClose(livePetFrame, to: predictedPetFrame) else {
+                guard petDragLiveFrameIsClose(livePetFrame, to: predictedPetFrame) else {
                     applyPredictedDragFrame(petFrame: predictedPetFrame, overlayFrame: predictedOverlayFrame)
                     ringView.showsReadout = false
                     return
@@ -3239,13 +3291,6 @@ final class LimitRingsApp: NSObject {
         if ringsVisible {
             panel.orderFrontRegardless()
         }
-    }
-
-    private func dragLiveFrameIsClose(_ liveFrame: CGRect, to predictedFrame: CGRect) -> Bool {
-        let dx = liveFrame.midX - predictedFrame.midX
-        let dy = liveFrame.midY - predictedFrame.midY
-        let tolerance = max(dragLiveMismatchTolerance, max(predictedFrame.width, predictedFrame.height) * 0.85)
-        return (dx * dx + dy * dy) <= tolerance * tolerance
     }
 
     private func startDragFollowTimer() {
@@ -3598,7 +3643,8 @@ func runDiagnostics(config: LimitRingsConfig) -> Bool {
         ).rawValue,
         globalStateExists: stateData != nil,
         avatarOverlayOpen: avatarOpen,
-        petFrameReadable: PetFrameReader(globalStatePath: config.globalStatePath).readPetFrameTopLeft() != nil,
+        petFrameReadable: PetFrameReader(globalStatePath: config.globalStatePath)
+            .readPetFrameTopLeft(requireLiveOverlay: true) != nil,
         primaryLimitAvailable: probe.state?.primary != nil,
         secondaryLimitAvailable: probe.state?.secondary != nil,
         additionalLimitCount: probe.state?.additional.count ?? 0,
