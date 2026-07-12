@@ -4,6 +4,10 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
+No changes yet.
+
+## 1.0.2 - 2026-07-12
+
 ### Full Snapshot Deadline
 
 - Anchor the connected 120-second full-snapshot reconcile to the last successful full read instead of any sparse live observation.
