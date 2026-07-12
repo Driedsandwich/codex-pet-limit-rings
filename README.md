@@ -28,7 +28,22 @@ Because the rings are drawn in a separate transparent overlay, they do not need 
 
 ## Driedsandwich Compatibility Line
 
-The downstream line keeps the original companion-app design and MIT license while focusing on compatibility with current ChatGPT/Codex desktop builds. It adds official app-server rate-limit reads, privacy-safe diagnostics, bounded fallback behavior, regression tests, and a shared local/CI release gate.
+This fork keeps the original companion-app design and MIT license, then extends it for current ChatGPT/Codex desktop builds. The main differences from upstream are:
+
+| Area | Upstream foundation | This fork through v1.0.2 |
+| --- | --- | --- |
+| Desktop compatibility | External overlay that follows the Codex pet | Current ChatGPT/Codex window matching, multi-display tracking, long-lived app-server updates, bounded reconnect/fallback, and a full-snapshot deadline that sparse events cannot postpone |
+| Limit information | Two glanceable remaining-capacity rings | All available limit buckets, credits, monthly caps, limit reasons, reset-credit counts, reset metadata freshness, and privacy-safe connection health; all account access remains read-only |
+| Usage and alerts | Ring visualization | Memory-only 14-day account usage and aggregate milestones, plus optional 25%, 10%, and recovery notifications that remain off until enabled |
+| Accessibility and language | Visual ring status | Reduced Motion, Increase Contrast, Differentiate Without Color, text/symbol status cues, and English/Japanese UI |
+| Distribution and verification | Source-based companion app | macOS 15+ Apple-silicon ZIP releases, checksum and rollback instructions, privacy diagnostics, macOS 15/26 CI, regression tests, packaging checks, and published-artifact smoke tests |
+
+The privacy boundary is intentionally narrow: no ChatGPT credential copying, account mutation, reset-credit consumption, thread/turn APIs, transcript inspection, or persistent usage history.
+
+<details>
+<summary>Release-by-release history</summary>
+
+<br>
 
 The published v0.5.1 release sets an explicit macOS 15.0 deployment target for both source builds and the downloadable app. It supersedes the v0.5.0 binary, which remains available for provenance but requires macOS 26.
 
@@ -45,6 +60,8 @@ The published v1.0.0 release strengthens compatibility and data trust. It identi
 The published v1.0.1 release adds an adaptive full-snapshot reconcile only when a connected app-server has produced no successful rate-limit observation for 120 seconds. Manual and scheduled reads coalesce, sparse live updates win races with full responses, and cadence timestamps remain memory-only.
 
 The published v1.0.2 release anchors that reconcile deadline to the last successful full snapshot. Sparse notifications still update live values immediately, but no longer postpone reset-time and other snapshot-metadata refreshes. Connection Health labels snapshot metadata freshness separately without adding persistence or permissions.
+
+</details>
 
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
 
