@@ -2,7 +2,7 @@
 
 Codex pets are tiny ambient companions for the work happening in Codex. This project adds one more layer to that idea: your pet can quietly show how much Codex capacity you have left, without turning the app into a dashboard.
 
-The experience is a small macOS companion app. It watches where the Codex pet is, draws two polished rings around it, and keeps those rings attached to the pet as it moves. It does not patch Codex, change pet art, or modify the Codex app bundle.
+The experience is a small macOS companion app. It watches where the Codex pet is, draws the available polished limit rings around it, and keeps those rings attached to the pet as it moves. It does not patch Codex, change pet art, or modify the Codex app bundle.
 
 It works with whatever Codex pet you like. Built-in pet, custom pet, tiny dog, robot, weather daemon, or anything else: the app does not care. It only follows the pet window that Codex is already showing.
 
@@ -12,8 +12,8 @@ It works with whatever Codex pet you like. Built-in pet, custom pet, tiny dog, r
 
 The rings are designed to be glanceable:
 
-- The outer ring shows the short-window limit remaining.
-- The inner ring shows the weekly limit remaining.
+- The outer ring shows the short-window limit remaining when Codex reports one.
+- The inner ring shows the weekly limit remaining; when only the weekly window is reported, it remains correctly identified even if Codex places it in the `primary` field.
 - Color moves from calm green/blue to amber and red as capacity gets low.
 - Hovering over the pet or rings shows the exact percentages at the current ring endpoints.
 - A small menu-bar icon exposes all available limit buckets, credits, monthly spend controls, reset credits, and limit status without modifying the account.
@@ -30,7 +30,7 @@ Because the rings are drawn in a separate transparent overlay, they do not need 
 
 This fork keeps the original companion-app design and MIT license, then extends it for current ChatGPT/Codex desktop builds. The main differences from upstream are:
 
-| Area | Upstream foundation | This fork through v1.0.2 |
+| Area | Upstream foundation | This fork through v1.0.3 |
 | --- | --- | --- |
 | Desktop compatibility | External overlay that follows the Codex pet | Current ChatGPT/Codex window matching, multi-display tracking, long-lived app-server updates, bounded reconnect/fallback, and a full-snapshot deadline that sparse events cannot postpone |
 | Limit information | Two glanceable remaining-capacity rings | All available limit buckets, credits, monthly caps, limit reasons, reset-credit counts, reset metadata freshness, and privacy-safe connection health; all account access remains read-only |
@@ -61,6 +61,8 @@ The published v1.0.1 release adds an adaptive full-snapshot reconcile only when 
 
 The published v1.0.2 release anchors that reconcile deadline to the last successful full snapshot. Sparse notifications still update live values immediately, but no longer postpone reset-time and other snapshot-metadata refreshes. Connection Health labels snapshot metadata freshness separately without adding persistence or permissions.
 
+The published v1.0.3 release handles the current weekly-only response after the five-hour short-window limit stopped being reported. It classifies windows by duration, removes stale short-window display and notification history, preserves sparse/full race safety, and restores the short ring automatically if Codex reports it again.
+
 </details>
 
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
@@ -77,15 +79,15 @@ Pet wakeups are handled by a lightweight filesystem watcher on Codex's local glo
 
 ## Quick Start
 
-### Install The Published v1.0.2 App
+### Install The Published v1.0.3 App
 
-The published v1.0.2 app supports macOS 15 and later on Apple silicon. The verified source and package gates pass on macOS 15 and macOS 26.
+The published v1.0.3 app supports macOS 15 and later on Apple silicon. The verified source and package gates pass on macOS 15 and macOS 26.
 
-Download the app and checksum from the [v1.0.2 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.2), then verify the ZIP before opening it. The expected ZIP SHA-256 is `46b0b8eda6ce48fbb46192f321edab4580571cd309f2ec09769482e942238e93`.
+Download the app and checksum from the [v1.0.3 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.3), then verify the ZIP before opening it. The expected ZIP SHA-256 is `9a11a29a2828dff36f1e033236b75c4a9c7940319b3ff10aa11e42a0c72ebd6c`.
 
 ```bash
-version=1.0.2
-expected_sha=46b0b8eda6ce48fbb46192f321edab4580571cd309f2ec09769482e942238e93
+version=1.0.3
+expected_sha=9a11a29a2828dff36f1e033236b75c4a9c7940319b3ff10aa11e42a0c72ebd6c
 release_dir="$HOME/Downloads/CodexPetLimitRings-v$version"
 base_url="https://github.com/Driedsandwich/codex-pet-limit-rings/releases/download/v$version"
 
@@ -102,7 +104,7 @@ codesign --verify --deep --strict CodexPetLimitRings.app
 Back up an existing installation, stop its LaunchAgent, and replace it with the verified app:
 
 ```bash
-version=1.0.2
+version=1.0.3
 release_dir="${release_dir:-$HOME/Downloads/CodexPetLimitRings-v$version}"
 backup="$HOME/Library/Application Support/CodexPetLimitRings/Backups/$(date +%Y%m%d-%H%M%S)"
 app="$HOME/Applications/CodexPetLimitRings.app"
@@ -277,13 +279,13 @@ tools/package-release.sh
 Smoke-test the published release without replacing the installed app:
 
 ```bash
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.2
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.3
 ```
 
 On an older macOS host, perform checksum, signature, architecture, version, and deployment-target inspection without launching the binary:
 
 ```bash
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.2 --inspect-only
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.3 --inspect-only
 ```
 
 ## Experiments
