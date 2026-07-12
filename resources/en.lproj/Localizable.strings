@@ -48,7 +48,7 @@
 "connection.rateLimitsWaiting" = "Rate-limit update pending";
 "connection.lastLiveUpdate" = "Last live update: %@";
 "connection.lastLiveWaiting" = "Live update not observed yet";
-"connection.lastFullSync" = "Last full sync: %@ · %@";
+"connection.lastFullSync" = "Full snapshot metadata: %@ · %@ · %@";
 "connection.lastFullWaiting" = "Full sync pending";
 "connection.lastValueChange" = "Last value change: %@ · %@";
 "connection.lastValueWaiting" = "Value change not observed yet";

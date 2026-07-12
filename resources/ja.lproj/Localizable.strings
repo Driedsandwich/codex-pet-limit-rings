@@ -48,7 +48,7 @@
 "connection.rateLimitsWaiting" = "利用上限の更新待ち";
 "connection.lastLiveUpdate" = "最後のライブ更新: %@";
 "connection.lastLiveWaiting" = "ライブ更新はまだありません";
-"connection.lastFullSync" = "最後の全体同期: %@ · %@";
+"connection.lastFullSync" = "全体スナップショット情報: %@ · %@ · %@";
 "connection.lastFullWaiting" = "全体同期を待っています";
 "connection.lastValueChange" = "最後の表示変更: %@ · %@";
 "connection.lastValueWaiting" = "表示変更はまだありません";

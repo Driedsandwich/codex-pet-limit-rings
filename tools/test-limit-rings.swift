@@ -19,7 +19,8 @@ struct LimitRingsTests {
             try testCodexCLIPathsCoverCurrentChatGPTAppAndPath()
             try testAppServerRateLimitDecode()
             try testSparseRateLimitMergePreservesSnapshotMetadata()
-            try testAdaptiveReconcileAndSingleInFlightGate()
+            try testFullSnapshotDeadlineAndSingleInFlightGate()
+            try testWindowRolloverRefreshesSnapshotMetadata()
             try testBufferedSparseUpdatesReapplyAfterFullSnapshot()
             try testRateLimitDisplaySignatureTracksVisibleValues()
             try testReconnectBackoffIsBounded()
@@ -104,12 +105,29 @@ struct LimitRingsTests {
         try expect(merged.rateLimitResetCredits?.availableCount == 2, "expected snapshot-only reset credits to remain")
     }
 
-    private static func testAdaptiveReconcileAndSingleInFlightGate() throws {
+    private static func testFullSnapshotDeadlineAndSingleInFlightGate() throws {
         let now = Date(timeIntervalSince1970: 10_000)
-        try expect(!shouldRunLiveReconcile(lastObservedAt: nil, now: now, interval: 120, isConnected: true), "expected reconcile to wait for a successful observation")
-        try expect(!shouldRunLiveReconcile(lastObservedAt: now.addingTimeInterval(-119), now: now, interval: 120, isConnected: true), "expected reconcile to wait until 120 seconds")
-        try expect(shouldRunLiveReconcile(lastObservedAt: now.addingTimeInterval(-120), now: now, interval: 120, isConnected: true), "expected reconcile at the 120-second boundary")
-        try expect(!shouldRunLiveReconcile(lastObservedAt: now.addingTimeInterval(-121), now: now, interval: 120, isConnected: false), "expected reconcile to remain disabled while disconnected")
+        let lastFullSync = now.addingTimeInterval(-90)
+        try expect(fullSnapshotReconcileDelay(lastFullSyncAt: nil, now: now, interval: 120, isConnected: true) == nil, "expected reconcile to wait for a successful full snapshot")
+        try expect(fullSnapshotReconcileDelay(lastFullSyncAt: lastFullSync, now: now, interval: 120, isConnected: true) == 30, "expected an absolute deadline derived from the last full snapshot")
+        try expect(!shouldRunFullSnapshotReconcile(lastFullSyncAt: now.addingTimeInterval(-119), now: now, interval: 120, isConnected: true), "expected reconcile to wait until 120 seconds")
+        try expect(shouldRunFullSnapshotReconcile(lastFullSyncAt: now.addingTimeInterval(-120), now: now, interval: 120, isConnected: true), "expected reconcile at the 120-second full-snapshot boundary")
+        try expect(!shouldRunFullSnapshotReconcile(lastFullSyncAt: now.addingTimeInterval(-121), now: now, interval: 120, isConnected: false), "expected reconcile to remain disabled while disconnected")
+
+        let sparseObservations = [30.0, 60.0, 90.0, 119.0].map { now.addingTimeInterval($0) }
+        for sparseObservedAt in sparseObservations {
+            let deadline = fullSnapshotReconcileDelay(
+                lastFullSyncAt: now,
+                now: sparseObservedAt,
+                interval: 120,
+                isConnected: true
+            )
+            try expect(deadline == 120 - sparseObservedAt.timeIntervalSince(now), "expected sparse observations not to move the full-snapshot deadline")
+        }
+        try expect(
+            shouldRunFullSnapshotReconcile(lastFullSyncAt: now, now: now.addingTimeInterval(120), interval: 120, isConnected: true),
+            "expected continuous sparse notifications not to postpone the full read"
+        )
 
         var gate = RateLimitRequestGate()
         guard let first = gate.begin() else {
@@ -132,6 +150,57 @@ struct LimitRingsTests {
         }
         gate.cancel()
         try expect(!gate.inFlight && !gate.isCurrent(second), "expected timeout cancellation to invalidate the active request")
+    }
+
+    private static func testWindowRolloverRefreshesSnapshotMetadata() throws {
+        let expiredResetAt = 1_000.0
+        let refreshedResetAt = 20_000.0
+        let prior = AppServerRateLimitResult(
+            rateLimits: AppServerRateLimitSnapshot(
+                limitId: "codex",
+                limitName: "Codex",
+                primary: AppServerRateLimitWindow(usedPercent: 99, windowDurationMins: 300, resetsAt: expiredResetAt),
+                secondary: nil,
+                credits: nil,
+                individualLimit: nil,
+                planType: "pro",
+                rateLimitReachedType: nil
+            ),
+            rateLimitsByLimitId: nil,
+            rateLimitResetCredits: nil
+        )
+        let sparse = AppServerRateLimitSnapshot(
+            limitId: nil,
+            limitName: nil,
+            primary: AppServerRateLimitWindow(usedPercent: 1, windowDurationMins: nil, resetsAt: nil),
+            secondary: nil,
+            credits: nil,
+            individualLimit: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        )
+        let sparseMerged = prior.mergingSparse(sparse)
+        try expect(sparseMerged.rateLimits.primary?.resetsAt == expiredResetAt, "expected sparse rollover notification to preserve unknown reset metadata")
+
+        let full = AppServerRateLimitResult(
+            rateLimits: AppServerRateLimitSnapshot(
+                limitId: "codex",
+                limitName: "Codex",
+                primary: AppServerRateLimitWindow(usedPercent: 0, windowDurationMins: 300, resetsAt: refreshedResetAt),
+                secondary: nil,
+                credits: nil,
+                individualLimit: nil,
+                planType: "pro",
+                rateLimitReachedType: nil
+            ),
+            rateLimitsByLimitId: nil,
+            rateLimitResetCredits: nil
+        )
+        let fullWithBufferedSparse = full.mergingSparse(sparse)
+        try expect(fullWithBufferedSparse.rateLimits.primary?.usedPercent == 1, "expected buffered sparse value to win after the full read")
+        try expect(fullWithBufferedSparse.rateLimits.primary?.resetsAt == refreshedResetAt, "expected the full read to replace expired rollover metadata")
+        try expect(dataFreshnessState(observedAt: Date(timeIntervalSince1970: 10_000), now: Date(timeIntervalSince1970: 10_120), maxAge: 120) == .current, "expected full metadata to remain current at the deadline")
+        try expect(dataFreshnessState(observedAt: Date(timeIntervalSince1970: 10_000), now: Date(timeIntervalSince1970: 10_121), maxAge: 120) == .stale, "expected overdue full metadata to be visibly stale")
     }
 
     private static func testBufferedSparseUpdatesReapplyAfterFullSnapshot() throws {
