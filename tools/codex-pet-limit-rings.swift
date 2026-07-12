@@ -57,6 +57,33 @@ struct LimitState {
     static let empty = LimitState(planType: nil, primary: nil, secondary: nil, additional: [], observedAt: Date(), source: "none")
 }
 
+func normalizedMainLimitBuckets(
+    primary: LimitBucket?,
+    secondary: LimitBucket?
+) -> (shortWindow: LimitBucket?, weeklyWindow: LimitBucket?) {
+    switch (primary, secondary) {
+    case let (primary?, secondary?):
+        if let primaryMinutes = primary.windowMinutes,
+           let secondaryMinutes = secondary.windowMinutes,
+           primaryMinutes > secondaryMinutes {
+            return (secondary, primary)
+        }
+        return (primary, secondary)
+    case let (bucket?, nil):
+        if let minutes = bucket.windowMinutes, minutes >= 24 * 60 {
+            return (nil, bucket)
+        }
+        return (bucket, nil)
+    case let (nil, bucket?):
+        if let minutes = bucket.windowMinutes, minutes < 24 * 60 {
+            return (bucket, nil)
+        }
+        return (nil, bucket)
+    case (nil, nil):
+        return (nil, nil)
+    }
+}
+
 private let limitStatePollInterval: TimeInterval = 20.0
 private let liveRateLimitReconcileInterval: TimeInterval = 120.0
 private let fullSnapshotFreshnessMaxAge: TimeInterval = liveRateLimitReconcileInterval
@@ -225,6 +252,24 @@ func limitNotificationTransition(
     return (currentBand, kind.map { LimitNotificationEvent(kind: $0, limitName: limitName, remainingPercent: remainingPercent) })
 }
 
+func activeLimitNotificationIDs(in state: LimitState) -> Set<String> {
+    var ids = Set<String>()
+    if state.primary != nil { ids.insert("codex.primary") }
+    if state.secondary != nil { ids.insert("codex.secondary") }
+    for limit in state.additional {
+        if limit.primary != nil { ids.insert("\(limit.id).primary") }
+        if limit.secondary != nil { ids.insert("\(limit.id).secondary") }
+    }
+    return ids
+}
+
+func pruningNotificationBands(
+    _ bands: [String: Int],
+    activeIDs: Set<String>
+) -> [String: Int] {
+    bands.filter { activeIDs.contains($0.key) }
+}
+
 private struct EventPayload: Decodable {
     var type: String
     var plan_type: String?
@@ -252,7 +297,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.2"
+    var version = "1.0.3"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -465,8 +510,12 @@ struct AppServerRateLimitResult: Decodable {
 
     func toLimitState(observedAt: Date) -> LimitState? {
         let selected = rateLimitsByLimitId?["codex"] ?? rateLimits
-        let primary = selected.primary?.toBucket()
-        let secondary = selected.secondary?.toBucket()
+        let normalized = normalizedMainLimitBuckets(
+            primary: selected.primary?.toBucket(),
+            secondary: selected.secondary?.toBucket()
+        )
+        let primary = normalized.shortWindow
+        let secondary = normalized.weeklyWindow
         guard primary != nil || secondary != nil else {
             return nil
         }
@@ -1352,8 +1401,12 @@ final class LimitStateReader {
             return .empty
         }
 
-        let primary = (payload.rate_limits?.primary ?? payload.rate_limits?.primary_window)?.toBucket()
-        let secondary = (payload.rate_limits?.secondary ?? payload.rate_limits?.secondary_window)?.toBucket()
+        let normalized = normalizedMainLimitBuckets(
+            primary: (payload.rate_limits?.primary ?? payload.rate_limits?.primary_window)?.toBucket(),
+            secondary: (payload.rate_limits?.secondary ?? payload.rate_limits?.secondary_window)?.toBucket()
+        )
+        let primary = normalized.shortWindow
+        let secondary = normalized.weeklyWindow
         let additional = (payload.additional_rate_limits ?? [:])
             .compactMap { name, payload -> AdditionalLimit? in
                 let primary = (payload.primary ?? payload.primary_window)?.toBucket()
@@ -2549,6 +2602,11 @@ final class LimitRingsApp: NSObject {
 
         if let primary = state.primary {
             rows.append(String(format: localized("details.short", fallback: "Short window: %@"), formatPercent(primary.remainingPercent)))
+            if state.source == "app-server" {
+                rows.append(localized("details.enforcementNotReported", fallback: "Short-window enforcement: not reported by Codex"))
+            }
+        } else if state.secondary != nil, state.source == "app-server" {
+            rows.append(localized("details.shortNotReported", fallback: "Short window: not reported by Codex"))
         }
         if let secondary = state.secondary {
             rows.append(String(format: localized("details.weekly", fallback: "Weekly window: %@"), formatPercent(secondary.remainingPercent)))
@@ -2962,6 +3020,10 @@ final class LimitRingsApp: NSObject {
         guard notificationsEnabled else { return }
         let isFresh = state.source == "app-server"
         guard isFresh else { return }
+        notificationBands = pruningNotificationBands(
+            notificationBands,
+            activeIDs: activeLimitNotificationIDs(in: state)
+        )
         var measurements: [(id: String, name: String, remaining: Double)] = []
         if let primary = state.primary {
             measurements.append(("codex.primary", localized("limit.short", fallback: "Short window"), primary.remainingPercent))

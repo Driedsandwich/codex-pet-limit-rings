@@ -14,6 +14,8 @@
 "source.local" = "ローカル";
 "source.unknown" = "不明";
 "details.short" = "短期枠: %@";
+"details.enforcementNotReported" = "短期枠の制限適用: Codexから報告なし";
+"details.shortNotReported" = "短期枠: Codexから報告なし";
 "details.weekly" = "週間枠: %@";
 "details.secondary" = "%@: 第2枠 %@";
 "details.resetCredits" = "利用可能なリセットクレジット: %@";

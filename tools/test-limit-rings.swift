@@ -18,6 +18,7 @@ struct LimitRingsTests {
         do {
             try testCodexCLIPathsCoverCurrentChatGPTAppAndPath()
             try testAppServerRateLimitDecode()
+            try testOptionalShortWindowDisappearsAndReturns()
             try testSparseRateLimitMergePreservesSnapshotMetadata()
             try testFullSnapshotDeadlineAndSingleInFlightGate()
             try testWindowRolloverRefreshesSnapshotMetadata()
@@ -30,6 +31,7 @@ struct LimitRingsTests {
             try testCompatibilityFreshnessAndSafeFailureReasons()
             try testUnknownAndOptionalProtocolFieldsRemainCompatible()
             try testNotificationTransitionsAndDedupe()
+            try testMissingLimitsPruneNotificationHistory()
             try testNotificationsAreOffByDefault()
             try testAccessibilityPresentationIsExplicit()
             try testAccessibilityRendererProducesImage()
@@ -71,6 +73,51 @@ struct LimitRingsTests {
         try expect(state.individualLimit?.remainingPercent == 75, "expected monthly spend-control limit")
         try expect(state.resetCreditsAvailable == 2, "expected reset-credit count")
         try expect(state.source == "app-server", "expected app-server source label")
+    }
+
+    private static func testOptionalShortWindowDisappearsAndReturns() throws {
+        let weeklyOnly = #"{"id":2,"result":{"rateLimits":{"limitId":"codex","planType":"pro","primary":{"usedPercent":18,"windowDurationMins":10080,"resetsAt":4102444800}}}}"#
+        guard let state = AppServerLimitStateReader.decodeRateLimitState(from: weeklyOnly) else {
+            throw LimitRingsTestError.failed("expected a weekly-only full snapshot to decode")
+        }
+        try expect(state.primary == nil, "expected an omitted short window to remain absent")
+        try expect(state.secondary?.remainingPercent == 82, "expected the remaining weekly window to stay visible")
+
+        let full = AppServerRateLimitResult(
+            rateLimits: AppServerRateLimitSnapshot(
+                limitId: "codex", limitName: "Codex",
+                primary: AppServerRateLimitWindow(usedPercent: 18, windowDurationMins: 10080, resetsAt: 4102444800),
+                secondary: nil,
+                credits: nil, individualLimit: nil, planType: "pro", rateLimitReachedType: nil
+            ),
+            rateLimitsByLimitId: nil,
+            rateLimitResetCredits: nil
+        )
+        let bufferedReturnedShortWindow = AppServerRateLimitSnapshot(
+            limitId: "codex", limitName: nil,
+            primary: AppServerRateLimitWindow(usedPercent: 90, windowDurationMins: 300, resetsAt: nil),
+            secondary: nil, credits: nil, individualLimit: nil, planType: nil, rateLimitReachedType: nil
+        )
+        let returnedByBufferedSparse = full.mergingSparse(bufferedReturnedShortWindow)
+        try expect(returnedByBufferedSparse.toLimitState(observedAt: Date())?.primary?.remainingPercent == 10, "expected a buffered live notification with short-window metadata to restore the short ring")
+
+        let fullWithReturnedShortWindow = AppServerRateLimitResult(
+            rateLimits: AppServerRateLimitSnapshot(
+                limitId: "codex", limitName: "Codex",
+                primary: AppServerRateLimitWindow(usedPercent: 12, windowDurationMins: 300, resetsAt: 4102444800),
+                secondary: AppServerRateLimitWindow(usedPercent: 18, windowDurationMins: 10080, resetsAt: 4102444800),
+                credits: nil, individualLimit: nil, planType: "pro", rateLimitReachedType: nil
+            ),
+            rateLimitsByLimitId: nil,
+            rateLimitResetCredits: nil
+        )
+        try expect(fullWithReturnedShortWindow.toLimitState(observedAt: Date())?.primary?.remainingPercent == 88, "expected a later full snapshot to restore a returned short window")
+
+        let unknownDurationFallback = normalizedMainLimitBuckets(
+            primary: LimitBucket(usedPercent: 10, windowMinutes: nil, resetAt: nil),
+            secondary: nil
+        )
+        try expect(unknownDurationFallback.shortWindow?.remainingPercent == 90, "expected an unknown-duration primary bucket to preserve positional compatibility")
     }
 
     private static func testSparseRateLimitMergePreservesSnapshotMetadata() throws {
@@ -382,6 +429,23 @@ struct LimitRingsTests {
         let cached = limitNotificationTransition(previousBand: .healthy, remainingPercent: 10, limitName: "Short", isFresh: false)
         try expect(cached.event == nil, "expected cached data not to notify")
         try expect(cached.band == .healthy, "expected cached data not to change the notification band")
+    }
+
+    private static func testMissingLimitsPruneNotificationHistory() throws {
+        let weeklyOnly = LimitState(
+            planType: "pro",
+            primary: nil,
+            secondary: LimitBucket(usedPercent: 18, windowMinutes: 10080, resetAt: nil),
+            additional: [],
+            observedAt: Date(),
+            source: "app-server"
+        )
+        let pruned = pruningNotificationBands(
+            ["codex.primary": LimitNotificationBand.critical.rawValue, "codex.secondary": LimitNotificationBand.healthy.rawValue],
+            activeIDs: activeLimitNotificationIDs(in: weeklyOnly)
+        )
+        try expect(pruned["codex.primary"] == nil, "expected an absent short window to drop stale notification history")
+        try expect(pruned["codex.secondary"] == LimitNotificationBand.healthy.rawValue, "expected active weekly notification history to remain")
     }
 
     private static func testNotificationsAreOffByDefault() throws {
