@@ -44,6 +44,8 @@ The published v1.0.0 release strengthens compatibility and data trust. It identi
 
 The published v1.0.1 release adds an adaptive full-snapshot reconcile only when a connected app-server has produced no successful rate-limit observation for 120 seconds. Manual and scheduled reads coalesce, sparse live updates win races with full responses, and cadence timestamps remain memory-only.
 
+The unreleased v1.0.2 candidate anchors that reconcile deadline to the last successful full snapshot. Sparse notifications still update live values immediately, but no longer postpone reset-time and other snapshot-metadata refreshes. Connection Health labels snapshot metadata freshness separately without adding persistence or permissions.
+
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
 
 Publication provenance and current release status are recorded in [PUBLICATION_RECORD.md](PUBLICATION_RECORD.md).

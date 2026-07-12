@@ -59,6 +59,7 @@ struct LimitState {
 
 private let limitStatePollInterval: TimeInterval = 20.0
 private let liveRateLimitReconcileInterval: TimeInterval = 120.0
+private let fullSnapshotFreshnessMaxAge: TimeInterval = liveRateLimitReconcileInterval
 private let dailyUsageRefreshInterval: TimeInterval = 15 * 60
 private let dailyUsageDisplayCount = 14
 private let appServerReconnectMaximumDelay: TimeInterval = 30
@@ -128,14 +129,29 @@ struct RateLimitRequestGate {
     }
 }
 
-func shouldRunLiveReconcile(
-    lastObservedAt: Date?,
+func fullSnapshotReconcileDelay(
+    lastFullSyncAt: Date?,
+    now: Date = Date(),
+    interval: TimeInterval = liveRateLimitReconcileInterval,
+    isConnected: Bool
+) -> TimeInterval? {
+    guard isConnected, let lastFullSyncAt else { return nil }
+    return max(0, interval - now.timeIntervalSince(lastFullSyncAt))
+}
+
+func shouldRunFullSnapshotReconcile(
+    lastFullSyncAt: Date?,
     now: Date = Date(),
     interval: TimeInterval = liveRateLimitReconcileInterval,
     isConnected: Bool
 ) -> Bool {
-    guard isConnected, let lastObservedAt else { return false }
-    return now.timeIntervalSince(lastObservedAt) >= interval
+    guard let delay = fullSnapshotReconcileDelay(
+        lastFullSyncAt: lastFullSyncAt,
+        now: now,
+        interval: interval,
+        isConnected: isConnected
+    ) else { return false }
+    return delay == 0
 }
 
 func rateLimitDisplaySignature(_ state: LimitState) -> String {
@@ -236,7 +252,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.1"
+    var version = "1.0.2"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -2167,6 +2183,8 @@ final class LimitRingsApp: NSObject {
                 self.appServerConnected = connected
                 self.lastConnectionErrorCode = connected ? nil : errorCode
                 if !connected {
+                    self.rateLimitReconcileTimer?.invalidate()
+                    self.rateLimitReconcileTimer = nil
                     if self.dailyUsageSnapshot == nil {
                         self.dailyUsageErrorCode = errorCode
                         self.usageReadInFlight = false
@@ -2210,10 +2228,10 @@ final class LimitRingsApp: NSObject {
             case .initialFullSync, .scheduledFullSync, .manualFullSync:
                 lastFullRateLimitSyncAt = state.observedAt
                 lastFullRateLimitSyncOrigin = origin
+                scheduleFullSnapshotReconcile()
             case .fallback:
                 break
             }
-            scheduleAdaptiveRateLimitReconcile()
         }
         let signature = rateLimitDisplaySignature(state)
         if lastRateLimitSignature != signature {
@@ -2228,11 +2246,21 @@ final class LimitRingsApp: NSObject {
         updateConnectionHealthMenu()
     }
 
-    private func scheduleAdaptiveRateLimitReconcile() {
+    private func scheduleFullSnapshotReconcile(now: Date = Date()) {
         rateLimitReconcileTimer?.invalidate()
-        rateLimitReconcileTimer = Timer.scheduledTimer(withTimeInterval: liveRateLimitReconcileInterval, repeats: false) { [weak self] _ in
+        rateLimitReconcileTimer = nil
+        guard let delay = fullSnapshotReconcileDelay(
+            lastFullSyncAt: lastFullRateLimitSyncAt,
+            now: now,
+            isConnected: appServerConnected
+        ) else { return }
+        rateLimitReconcileTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             guard let self,
-                  shouldRunLiveReconcile(lastObservedAt: self.lastRateLimitObservedAt, isConnected: self.appServerConnected) else { return }
+                  shouldRunFullSnapshotReconcile(
+                    lastFullSyncAt: self.lastFullRateLimitSyncAt,
+                    isConnected: self.appServerConnected
+                  ) else { return }
+            self.rateLimitReconcileTimer = nil
             self.liveClient.requestRateLimits(origin: .scheduledFullSync)
         }
     }
@@ -2682,10 +2710,11 @@ final class LimitRingsApp: NSObject {
             origin: nil,
             to: menu
         )
-        appendCadenceRow(
+        appendFreshnessCadenceRow(
             observedAt: lastFullRateLimitSyncAt,
+            maxAge: fullSnapshotFreshnessMaxAge,
             key: "connection.lastFullSync",
-            fallback: "Last full sync: %@ · %@",
+            fallback: "Full snapshot metadata: %@ · %@ · %@",
             waitingKey: "connection.lastFullWaiting",
             waitingFallback: "Full sync pending",
             origin: lastFullRateLimitSyncOrigin,
@@ -2763,6 +2792,28 @@ final class LimitRingsApp: NSObject {
         } else {
             appendDisabledMenuItem(String(format: localized(key, fallback: fallback), time), to: menu)
         }
+    }
+
+    private func appendFreshnessCadenceRow(
+        observedAt: Date?, maxAge: TimeInterval, key: String, fallback: String,
+        waitingKey: String, waitingFallback: String,
+        origin: RateLimitUpdateOrigin?, to menu: NSMenu
+    ) {
+        guard let observedAt, let origin else {
+            appendDisabledMenuItem(localized(waitingKey, fallback: waitingFallback), to: menu)
+            return
+        }
+        let time = DateFormatter.localizedString(from: observedAt, dateStyle: .none, timeStyle: .short)
+        let freshness = dataFreshnessState(observedAt: observedAt, maxAge: maxAge)
+        appendDisabledMenuItem(
+            String(
+                format: localized(key, fallback: fallback),
+                time,
+                localizedRateLimitOrigin(origin),
+                localizedFreshness(freshness)
+            ),
+            to: menu
+        )
     }
 
     private func localizedRateLimitOrigin(_ origin: RateLimitUpdateOrigin) -> String {
