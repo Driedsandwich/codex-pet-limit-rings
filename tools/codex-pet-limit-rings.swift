@@ -481,26 +481,6 @@ struct AppServerRateLimitResult: Decodable {
         return merged
     }
 
-    func mergingBufferedSparseOntoFullSnapshot(_ update: AppServerRateLimitSnapshot) -> AppServerRateLimitResult {
-        var topologyBoundUpdate = update
-        if rateLimits.primary == nil { topologyBoundUpdate.primary = nil }
-        if rateLimits.secondary == nil { topologyBoundUpdate.secondary = nil }
-
-        var merged = self
-        merged.rateLimits = rateLimits.mergingSparse(topologyBoundUpdate)
-        if let snapshots = rateLimitsByLimitId {
-            let updateID = update.limitId ?? rateLimits.limitId ?? "codex"
-            guard let fullSnapshot = snapshots[updateID] else { return merged }
-            var byID = snapshots
-            var bounded = update
-            if fullSnapshot.primary == nil { bounded.primary = nil }
-            if fullSnapshot.secondary == nil { bounded.secondary = nil }
-            byID[updateID] = fullSnapshot.mergingSparse(bounded)
-            merged.rateLimitsByLimitId = byID
-        }
-        return merged
-    }
-
     func toLimitState(observedAt: Date) -> LimitState? {
         let selected = rateLimitsByLimitId?["codex"] ?? rateLimits
         let primary = selected.primary?.toBucket()
@@ -1143,7 +1123,7 @@ final class AppServerLiveClient {
                 failConnection("invalid_rate_limit_response")
                 return
             }
-            let mergedResult = pendingSparseRateLimits.reduce(result, { $0.mergingBufferedSparseOntoFullSnapshot($1) })
+            let mergedResult = pendingSparseRateLimits.reduce(result, { $0.mergingSparse($1) })
             pendingSparseRateLimits.removeAll()
             guard let state = mergedResult.toLimitState(observedAt: Date()) else {
                 failConnection("invalid_rate_limit_response")

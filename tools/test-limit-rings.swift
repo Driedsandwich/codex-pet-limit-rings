@@ -92,16 +92,25 @@ struct LimitRingsTests {
             rateLimitsByLimitId: nil,
             rateLimitResetCredits: nil
         )
-        let staleBufferedShortWindow = AppServerRateLimitSnapshot(
+        let bufferedReturnedShortWindow = AppServerRateLimitSnapshot(
             limitId: "codex", limitName: nil,
             primary: AppServerRateLimitWindow(usedPercent: 90, windowDurationMins: nil, resetsAt: nil),
             secondary: nil, credits: nil, individualLimit: nil, planType: nil, rateLimitReachedType: nil
         )
-        let topologySafe = full.mergingBufferedSparseOntoFullSnapshot(staleBufferedShortWindow)
-        try expect(topologySafe.rateLimits.primary == nil, "expected a full snapshot omission to clear stale buffered short-window data")
+        let returnedByBufferedSparse = full.mergingSparse(bufferedReturnedShortWindow)
+        try expect(returnedByBufferedSparse.rateLimits.primary?.usedPercent == 90, "expected a buffered live notification to restore a returned short window")
 
-        let returned = full.mergingSparse(staleBufferedShortWindow)
-        try expect(returned.rateLimits.primary?.usedPercent == 90, "expected a later live notification to restore a returned short window")
+        let fullWithReturnedShortWindow = AppServerRateLimitResult(
+            rateLimits: AppServerRateLimitSnapshot(
+                limitId: "codex", limitName: "Codex",
+                primary: AppServerRateLimitWindow(usedPercent: 12, windowDurationMins: 300, resetsAt: 4102444800),
+                secondary: AppServerRateLimitWindow(usedPercent: 18, windowDurationMins: 10080, resetsAt: 4102444800),
+                credits: nil, individualLimit: nil, planType: "pro", rateLimitReachedType: nil
+            ),
+            rateLimitsByLimitId: nil,
+            rateLimitResetCredits: nil
+        )
+        try expect(fullWithReturnedShortWindow.toLimitState(observedAt: Date())?.primary?.remainingPercent == 88, "expected a later full snapshot to restore a returned short window")
     }
 
     private static func testSparseRateLimitMergePreservesSnapshotMetadata() throws {
