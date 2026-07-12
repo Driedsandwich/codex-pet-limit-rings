@@ -4,7 +4,11 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
-No changes yet.
+### Pet Lifecycle Visibility
+
+- Require a live, on-screen Codex pet overlay before showing the rings instead of trusting stale persisted bounds.
+- Hide the rings when Codex exits, the pet closes, or its overlay is minimized or on another Space.
+- Restore the rings automatically when the live pet overlay returns, while preserving drag tracking and multi-display coordinates.
 
 ## 1.0.3 - 2026-07-13
 
