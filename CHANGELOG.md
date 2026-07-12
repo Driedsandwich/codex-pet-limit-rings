@@ -7,6 +7,7 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 ### Optional Short-Window Compatibility
 
 - Treat the short-window bucket as optional when Codex temporarily stops reporting it.
+- Classify short and weekly windows by duration when a weekly-only response is returned in the `primary` field.
 - Let a full snapshot remove stale short-window values and notification history while preserving weekly and additional limits.
 - Restore the short-window ring automatically if Codex reports it again.
 - Distinguish reported usage from enforcement status without claiming an unlimited plan or permanent policy change.

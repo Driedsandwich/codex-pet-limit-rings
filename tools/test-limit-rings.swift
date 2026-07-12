@@ -76,7 +76,7 @@ struct LimitRingsTests {
     }
 
     private static func testOptionalShortWindowDisappearsAndReturns() throws {
-        let weeklyOnly = #"{"id":2,"result":{"rateLimits":{"limitId":"codex","planType":"pro","secondary":{"usedPercent":18,"windowDurationMins":10080,"resetsAt":4102444800}}}}"#
+        let weeklyOnly = #"{"id":2,"result":{"rateLimits":{"limitId":"codex","planType":"pro","primary":{"usedPercent":18,"windowDurationMins":10080,"resetsAt":4102444800}}}}"#
         guard let state = AppServerLimitStateReader.decodeRateLimitState(from: weeklyOnly) else {
             throw LimitRingsTestError.failed("expected a weekly-only full snapshot to decode")
         }
@@ -85,8 +85,9 @@ struct LimitRingsTests {
 
         let full = AppServerRateLimitResult(
             rateLimits: AppServerRateLimitSnapshot(
-                limitId: "codex", limitName: "Codex", primary: nil,
-                secondary: AppServerRateLimitWindow(usedPercent: 18, windowDurationMins: 10080, resetsAt: 4102444800),
+                limitId: "codex", limitName: "Codex",
+                primary: AppServerRateLimitWindow(usedPercent: 18, windowDurationMins: 10080, resetsAt: 4102444800),
+                secondary: nil,
                 credits: nil, individualLimit: nil, planType: "pro", rateLimitReachedType: nil
             ),
             rateLimitsByLimitId: nil,
@@ -94,11 +95,11 @@ struct LimitRingsTests {
         )
         let bufferedReturnedShortWindow = AppServerRateLimitSnapshot(
             limitId: "codex", limitName: nil,
-            primary: AppServerRateLimitWindow(usedPercent: 90, windowDurationMins: nil, resetsAt: nil),
+            primary: AppServerRateLimitWindow(usedPercent: 90, windowDurationMins: 300, resetsAt: nil),
             secondary: nil, credits: nil, individualLimit: nil, planType: nil, rateLimitReachedType: nil
         )
         let returnedByBufferedSparse = full.mergingSparse(bufferedReturnedShortWindow)
-        try expect(returnedByBufferedSparse.rateLimits.primary?.usedPercent == 90, "expected a buffered live notification to restore a returned short window")
+        try expect(returnedByBufferedSparse.toLimitState(observedAt: Date())?.primary?.remainingPercent == 10, "expected a buffered live notification with short-window metadata to restore the short ring")
 
         let fullWithReturnedShortWindow = AppServerRateLimitResult(
             rateLimits: AppServerRateLimitSnapshot(
@@ -111,6 +112,12 @@ struct LimitRingsTests {
             rateLimitResetCredits: nil
         )
         try expect(fullWithReturnedShortWindow.toLimitState(observedAt: Date())?.primary?.remainingPercent == 88, "expected a later full snapshot to restore a returned short window")
+
+        let unknownDurationFallback = normalizedMainLimitBuckets(
+            primary: LimitBucket(usedPercent: 10, windowMinutes: nil, resetAt: nil),
+            secondary: nil
+        )
+        try expect(unknownDurationFallback.shortWindow?.remainingPercent == 90, "expected an unknown-duration primary bucket to preserve positional compatibility")
     }
 
     private static func testSparseRateLimitMergePreservesSnapshotMetadata() throws {

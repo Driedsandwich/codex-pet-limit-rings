@@ -57,6 +57,33 @@ struct LimitState {
     static let empty = LimitState(planType: nil, primary: nil, secondary: nil, additional: [], observedAt: Date(), source: "none")
 }
 
+func normalizedMainLimitBuckets(
+    primary: LimitBucket?,
+    secondary: LimitBucket?
+) -> (shortWindow: LimitBucket?, weeklyWindow: LimitBucket?) {
+    switch (primary, secondary) {
+    case let (primary?, secondary?):
+        if let primaryMinutes = primary.windowMinutes,
+           let secondaryMinutes = secondary.windowMinutes,
+           primaryMinutes > secondaryMinutes {
+            return (secondary, primary)
+        }
+        return (primary, secondary)
+    case let (bucket?, nil):
+        if let minutes = bucket.windowMinutes, minutes >= 24 * 60 {
+            return (nil, bucket)
+        }
+        return (bucket, nil)
+    case let (nil, bucket?):
+        if let minutes = bucket.windowMinutes, minutes < 24 * 60 {
+            return (bucket, nil)
+        }
+        return (nil, bucket)
+    case (nil, nil):
+        return (nil, nil)
+    }
+}
+
 private let limitStatePollInterval: TimeInterval = 20.0
 private let liveRateLimitReconcileInterval: TimeInterval = 120.0
 private let fullSnapshotFreshnessMaxAge: TimeInterval = liveRateLimitReconcileInterval
@@ -483,8 +510,12 @@ struct AppServerRateLimitResult: Decodable {
 
     func toLimitState(observedAt: Date) -> LimitState? {
         let selected = rateLimitsByLimitId?["codex"] ?? rateLimits
-        let primary = selected.primary?.toBucket()
-        let secondary = selected.secondary?.toBucket()
+        let normalized = normalizedMainLimitBuckets(
+            primary: selected.primary?.toBucket(),
+            secondary: selected.secondary?.toBucket()
+        )
+        let primary = normalized.shortWindow
+        let secondary = normalized.weeklyWindow
         guard primary != nil || secondary != nil else {
             return nil
         }
@@ -1370,8 +1401,12 @@ final class LimitStateReader {
             return .empty
         }
 
-        let primary = (payload.rate_limits?.primary ?? payload.rate_limits?.primary_window)?.toBucket()
-        let secondary = (payload.rate_limits?.secondary ?? payload.rate_limits?.secondary_window)?.toBucket()
+        let normalized = normalizedMainLimitBuckets(
+            primary: (payload.rate_limits?.primary ?? payload.rate_limits?.primary_window)?.toBucket(),
+            secondary: (payload.rate_limits?.secondary ?? payload.rate_limits?.secondary_window)?.toBucket()
+        )
+        let primary = normalized.shortWindow
+        let secondary = normalized.weeklyWindow
         let additional = (payload.additional_rate_limits ?? [:])
             .compactMap { name, payload -> AdditionalLimit? in
                 let primary = (payload.primary ?? payload.primary_window)?.toBucket()

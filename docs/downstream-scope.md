@@ -85,6 +85,7 @@ The first downstream parent commit changes live pet-window matching from the vis
 ## Optional Short-Window Compatibility
 
 - Treat the primary short-window bucket as optional instead of inferring plan policy from its presence or absence.
+- Classify the main short and weekly windows by reported duration so a weekly-only response remains a weekly ring even if it is returned in the `primary` field.
 - When a full snapshot omits the short window, remove its stale ring and notification history while keeping any reported weekly and additional limits visible.
 - State only that Codex did not report the window; do not claim an unlimited plan or permanent policy change without a protocol field that says so.
 - When Codex still reports short-window usage, label enforcement as unreported instead of treating the usage counter itself as proof that requests are restricted.
