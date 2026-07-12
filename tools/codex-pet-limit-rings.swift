@@ -225,6 +225,24 @@ func limitNotificationTransition(
     return (currentBand, kind.map { LimitNotificationEvent(kind: $0, limitName: limitName, remainingPercent: remainingPercent) })
 }
 
+func activeLimitNotificationIDs(in state: LimitState) -> Set<String> {
+    var ids = Set<String>()
+    if state.primary != nil { ids.insert("codex.primary") }
+    if state.secondary != nil { ids.insert("codex.secondary") }
+    for limit in state.additional {
+        if limit.primary != nil { ids.insert("\(limit.id).primary") }
+        if limit.secondary != nil { ids.insert("\(limit.id).secondary") }
+    }
+    return ids
+}
+
+func pruningNotificationBands(
+    _ bands: [String: Int],
+    activeIDs: Set<String>
+) -> [String: Int] {
+    bands.filter { activeIDs.contains($0.key) }
+}
+
 private struct EventPayload: Decodable {
     var type: String
     var plan_type: String?
@@ -252,7 +270,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.2"
+    var version = "1.0.3"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -458,6 +476,26 @@ struct AppServerRateLimitResult: Decodable {
             let updateID = update.limitId ?? rateLimits.limitId ?? "codex"
             var byID = merged.rateLimitsByLimitId ?? [:]
             byID[updateID] = (byID[updateID] ?? rateLimits).mergingSparse(update)
+            merged.rateLimitsByLimitId = byID
+        }
+        return merged
+    }
+
+    func mergingBufferedSparseOntoFullSnapshot(_ update: AppServerRateLimitSnapshot) -> AppServerRateLimitResult {
+        var topologyBoundUpdate = update
+        if rateLimits.primary == nil { topologyBoundUpdate.primary = nil }
+        if rateLimits.secondary == nil { topologyBoundUpdate.secondary = nil }
+
+        var merged = self
+        merged.rateLimits = rateLimits.mergingSparse(topologyBoundUpdate)
+        if let snapshots = rateLimitsByLimitId {
+            let updateID = update.limitId ?? rateLimits.limitId ?? "codex"
+            guard let fullSnapshot = snapshots[updateID] else { return merged }
+            var byID = snapshots
+            var bounded = update
+            if fullSnapshot.primary == nil { bounded.primary = nil }
+            if fullSnapshot.secondary == nil { bounded.secondary = nil }
+            byID[updateID] = fullSnapshot.mergingSparse(bounded)
             merged.rateLimitsByLimitId = byID
         }
         return merged
@@ -1105,7 +1143,7 @@ final class AppServerLiveClient {
                 failConnection("invalid_rate_limit_response")
                 return
             }
-            let mergedResult = pendingSparseRateLimits.reduce(result, { $0.mergingSparse($1) })
+            let mergedResult = pendingSparseRateLimits.reduce(result, { $0.mergingBufferedSparseOntoFullSnapshot($1) })
             pendingSparseRateLimits.removeAll()
             guard let state = mergedResult.toLimitState(observedAt: Date()) else {
                 failConnection("invalid_rate_limit_response")
@@ -2549,6 +2587,11 @@ final class LimitRingsApp: NSObject {
 
         if let primary = state.primary {
             rows.append(String(format: localized("details.short", fallback: "Short window: %@"), formatPercent(primary.remainingPercent)))
+            if state.source == "app-server" {
+                rows.append(localized("details.enforcementNotReported", fallback: "Short-window enforcement: not reported by Codex"))
+            }
+        } else if state.secondary != nil, state.source == "app-server" {
+            rows.append(localized("details.shortNotReported", fallback: "Short window: not reported by Codex"))
         }
         if let secondary = state.secondary {
             rows.append(String(format: localized("details.weekly", fallback: "Weekly window: %@"), formatPercent(secondary.remainingPercent)))
@@ -2962,6 +3005,10 @@ final class LimitRingsApp: NSObject {
         guard notificationsEnabled else { return }
         let isFresh = state.source == "app-server"
         guard isFresh else { return }
+        notificationBands = pruningNotificationBands(
+            notificationBands,
+            activeIDs: activeLimitNotificationIDs(in: state)
+        )
         var measurements: [(id: String, name: String, remaining: Double)] = []
         if let primary = state.primary {
             measurements.append(("codex.primary", localized("limit.short", fallback: "Short window"), primary.remainingPercent))

@@ -14,6 +14,8 @@
 "source.local" = "Local";
 "source.unknown" = "Unknown";
 "details.short" = "Short window: %@";
+"details.enforcementNotReported" = "Short-window enforcement: not reported by Codex";
+"details.shortNotReported" = "Short window: not reported by Codex";
 "details.weekly" = "Weekly window: %@";
 "details.secondary" = "%@: secondary %@";
 "details.resetCredits" = "Reset credits available: %@";

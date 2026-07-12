@@ -4,7 +4,12 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
-No changes yet.
+### Optional Short-Window Compatibility
+
+- Treat the short-window bucket as optional when Codex temporarily stops reporting it.
+- Let a full snapshot remove stale short-window values and notification history while preserving weekly and additional limits.
+- Restore the short-window ring automatically if Codex reports it again.
+- Distinguish reported usage from enforcement status without claiming an unlimited plan or permanent policy change.
 
 ## 1.0.2 - 2026-07-12
 
