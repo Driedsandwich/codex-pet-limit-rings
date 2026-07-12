@@ -24,12 +24,12 @@ Build the release package and checksum:
 tools/package-release.sh
 ```
 
-Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The published v1.0.1 package is ad-hoc signed and not notarized. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, and confirm English and Japanese localization resources are present.
+Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The published v1.0.2 package is ad-hoc signed and not notarized. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, and confirm English and Japanese localization resources are present.
 
 The packaging command verifies its checksum before returning. To repeat that check manually, run it from `dist/` so the relative archive name resolves:
 
 ```bash
-(cd dist && shasum -a 256 -c CodexPetLimitRings-v1.0.1-macos-arm64.zip.sha256)
+(cd dist && shasum -a 256 -c CodexPetLimitRings-v1.0.2-macos-arm64.zip.sha256)
 ```
 
 ## Runtime Gate
@@ -51,6 +51,21 @@ Confirm the menu-bar source is `App Server`, `Cached`, or `Local`, full limit de
 - Confirm no local paths, logs, state files, screenshots with private content, or `tmp/` artifacts are included.
 - Create the fork, push, upstream PR, and downstream release as separate operations.
 - Record the fork URL, commit/tag, CI result, PR URL/status, and known limitations.
+
+### Published v1.0.2 Evidence
+
+- Release commit and target: `d88eabb77b7265928c74b9d51b69e5739bb632a8`.
+- Tag and Release: [`v1.0.2`](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.2).
+- Release ZIP SHA-256: `46b0b8eda6ce48fbb46192f321edab4580571cd309f2ec09769482e942238e93`.
+- Packaged architecture: Apple silicon `arm64`.
+- Packaged minimum OS: macOS `15.0` in both `LSMinimumSystemVersion` and the Mach-O build command.
+- Signing status: ad-hoc signed and not notarized.
+- Merge-commit CI passed on macOS 15 and macOS 26 (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29184418110`).
+- The published artifact smoke test passed checksum, signature, architecture, version, deployment-target, English/Japanese resources, preview-execution, and privacy-safe diagnostic checks:
+
+```bash
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.2
+```
 
 ### Published v1.0.1 Evidence
 
