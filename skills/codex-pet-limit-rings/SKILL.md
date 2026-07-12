@@ -73,7 +73,7 @@ Honor Reduced Motion, Increase Contrast, and Differentiate Without Color. Keep E
 
 Run `CodexPetLimitRings --diagnose` for a privacy-safe JSON compatibility check. It must not print tokens, raw account identifiers, or user-specific paths.
 
-Pet wakeups and moves are driven by a filesystem watcher on `~/.codex/.codex-global-state.json`, with a slow fallback timer for missed events. Keep that event-driven path intact when changing frame-following behavior.
+Pet wakeups and moves are driven by a filesystem watcher on `~/.codex/.codex-global-state.json`, with a two-second fallback timer for missed events. A matching on-screen Codex pet overlay is required before displaying rings; persisted open state and bounds are only a positioning reference. Hide the rings when Codex exits, the pet closes, or its overlay is minimized or on another Space, and restore them when the live overlay returns. Keep that live-window gate, event-driven path, and drag mismatch protection intact when changing frame-following behavior.
 
 ## Editing Workflow
 

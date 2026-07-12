@@ -15,9 +15,9 @@ The rings are pet-agnostic. They work with any pet Codex displays because the ap
 - `Limit Notifications` is off by default. Enabling it is the only action that requests macOS notification permission.
 - Hovering over the ring or pet shows exact remaining percentages at the arc endpoints.
 - Dragging the pet makes the rings follow the gesture immediately while Codex persists the new position.
-- Closing the Codex pet hides the rings.
+- Closing Codex or the pet hides the rings. A minimized pet or a pet on another Space also remains hidden until its live overlay is on screen again.
 - Multi-display positioning uses the screen containing the pet bounds, not the currently focused screen.
-- macOS desktop/Space switching keeps the rings visible with the pet rather than tying them to one active desktop.
+- macOS desktop/Space switching hides the rings while the pet is off the active Space and restores them with the pet when its Space becomes active.
 - Switching to another Codex pet requires no extra setup; the overlay follows the active pet.
 
 ## Data Flow
@@ -26,15 +26,15 @@ The app reads live usage first, then local files as support or fallback:
 
 - One long-lived `codex app-server --stdio` connection is the primary source. It performs the required `initialize` / `initialized` handshake, reads stable `account/rateLimits/read`, and applies stable sparse `account/rateLimits/updated` notifications.
 - The same connection reads stable `account/usage/read` every 15 minutes. Normalized daily buckets plus current/longest streak, longest turn, peak daily tokens, and lifetime tokens remain in memory only.
-- `~/.codex/.codex-global-state.json`: current pet bounds, using `electron-avatar-overlay-bounds.mascot`.
+- `~/.codex/.codex-global-state.json`: saved pet bounds, using `electron-avatar-overlay-bounds.mascot`, as a reference for locating the live window rather than proof that the pet is visible.
 - `electron-avatar-overlay-open` in the same state file: whether the Codex pet is currently open.
 - The newest existing `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite`: fallback source using the newest current `codex.rate_limits` event when app-server fails.
 
-The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. A slow frame timer remains as a fallback in case the file is replaced or an event is missed. App-server disconnects use bounded exponential reconnect delays; the 20-second local rate-limit poll runs only while disconnected.
+The app watches `~/.codex/.codex-global-state.json` with a macOS file event source, so pet open/close and position writes trigger an immediate frame update. Display still requires a matching live, on-screen Codex overlay window; stale `overlay-open` and bounds values cannot keep the rings visible after Codex exits. A two-second frame timer hides stale rings and restores them when the live pet returns if a state-file event is missed. App-server disconnects use bounded exponential reconnect delays; the 20-second local rate-limit poll runs only while disconnected.
 
 While app-server is connected, sparse notifications remain the normal update path. If no successful rate-limit observation arrives for 120 seconds, the app performs one read-only `account/rateLimits/read` reconcile. Manual and scheduled full reads share a single in-flight gate and a five-second timeout. Sparse notifications received while a full read is pending are displayed immediately, buffered, and reapplied to the returned full snapshot so older full data cannot overwrite a newer live value. A full snapshot that omits the short-window bucket clears the old short ring and its notification history when no newer sparse update reports that bucket. A later sparse update or full snapshot restores the ring immediately. Connection Health keeps the latest live-notification, full-sync, and displayed-value-change times and origins in memory only.
 
-During pet drags, the live overlay window is matched to the `com.openai.codex` application bundle rather than a fixed visible process name. This supports both older builds presented as `Codex` and current builds presented as `ChatGPT` without matching unrelated ChatGPT wrappers.
+The live overlay window is matched to the `com.openai.codex` application bundle rather than a fixed visible process name. Saved bounds rank matching candidates and provide mascot offsets, but only an on-screen match authorizes drawing. This supports both older builds presented as `Codex` and current builds presented as `ChatGPT` without matching unrelated ChatGPT wrappers. During pet drags, the same match gate rejects distant windows while the existing predicted-frame path keeps the rings attached to the gesture.
 
 No OpenAI API key is required. The app no longer reads ChatGPT bearer tokens from `auth.json`. The menu summary distinguishes `App Server`, a recent in-memory `Cached` snapshot, and the `Local` SQLite fallback. Expired values are rejected.
 

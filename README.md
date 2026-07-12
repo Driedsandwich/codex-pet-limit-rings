@@ -22,7 +22,7 @@ The rings are designed to be glanceable:
 - Optional 25%, 10%, and recovery notifications are off by default and request macOS permission only when enabled.
 - Reduced Motion, Increase Contrast, Differentiate Without Color, English, and Japanese are supported.
 
-When the Codex pet is closed, the rings disappear. When the pet comes back, they come back too. On multi-display setups, the rings stay with the pet instead of jumping to whichever screen is focused.
+When Codex exits or the pet is closed, minimized, or moved off the active Space, the rings disappear instead of remaining at stale saved coordinates. When the live pet window comes back, they come back too. On multi-display setups, the rings stay with the pet instead of jumping to whichever screen is focused.
 
 Because the rings are drawn in a separate transparent overlay, they do not need pet-specific sprites, masks, metadata, or configuration. Change pets in Codex and the rings follow the new one automatically.
 
@@ -30,7 +30,7 @@ Because the rings are drawn in a separate transparent overlay, they do not need 
 
 This fork keeps the original companion-app design and MIT license, then extends it for current ChatGPT/Codex desktop builds. The main differences from upstream are:
 
-| Area | Upstream foundation | This fork through v1.0.3 |
+| Area | Upstream foundation | This fork (current source) |
 | --- | --- | --- |
 | Desktop compatibility | External overlay that follows the Codex pet | Current ChatGPT/Codex window matching, multi-display tracking, long-lived app-server updates, bounded reconnect/fallback, and a full-snapshot deadline that sparse events cannot postpone |
 | Limit information | Two glanceable remaining-capacity rings | All available limit buckets, credits, monthly caps, limit reasons, reset-credit counts, reset metadata freshness, and privacy-safe connection health; all account access remains read-only |

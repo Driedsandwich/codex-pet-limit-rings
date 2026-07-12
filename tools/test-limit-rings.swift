@@ -17,6 +17,9 @@ struct LimitRingsTests {
     static func main() {
         do {
             try testCodexCLIPathsCoverCurrentChatGPTAppAndPath()
+            try testPetLifecycleRequiresLiveOverlay()
+            try testCodexApplicationVisibilityGate()
+            try testPetDragLiveMismatchGate()
             try testAppServerRateLimitDecode()
             try testOptionalShortWindowDisappearsAndReturns()
             try testSparseRateLimitMergePreservesSnapshotMetadata()
@@ -57,6 +60,114 @@ struct LimitRingsTests {
         )
         try expect(paths.contains("/custom/bin/codex"), "expected PATH-based Codex CLI discovery")
         try expect(paths.contains("/opt/homebrew/bin/codex"), "expected Homebrew Codex CLI discovery")
+    }
+
+    private static func testPetLifecycleRequiresLiveOverlay() throws {
+        let root = try temporaryDirectory(named: "pet-lifecycle")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent(".codex-global-state.json")
+
+        func writeState(open: Bool) throws {
+            let payload: [String: Any] = [
+                "electron-avatar-overlay-open": open,
+                "electron-avatar-overlay-bounds": [
+                    "x": 120,
+                    "y": 240,
+                    "width": 180,
+                    "height": 180,
+                    "mascot": ["left": 24, "top": 32, "width": 64, "height": 64]
+                ]
+            ]
+            try JSONSerialization.data(withJSONObject: payload).write(to: stateURL)
+        }
+
+        try writeState(open: true)
+        var liveOverlay: CGRect? = nil
+        let reader = PetFrameReader(
+            globalStatePath: stateURL,
+            liveOverlayProvider: { _, _ in liveOverlay }
+        )
+
+        try expect(
+            reader.readPetFramesTopLeft(requireLiveOverlay: true) == nil,
+            "expected stale persisted bounds to stay hidden while no live Codex pet window exists"
+        )
+        try expect(
+            reader.readPetFramesTopLeft(requireLiveOverlay: false) != nil,
+            "expected persisted bounds to remain available only as non-visibility metadata"
+        )
+
+        liveOverlay = CGRect(x: -1_500, y: 300, width: 180, height: 180)
+        let restored = reader.readPetFramesTopLeft(requireLiveOverlay: true)
+        try expect(restored?.usedLiveOverlay == true, "expected a returned live window to restore the rings")
+        try expect(restored?.overlay.minX == -1_500, "expected live coordinates on another display to be preserved")
+        try expect(restored?.mascot.minX == -1_476, "expected persisted mascot offsets to apply to the live overlay")
+
+        liveOverlay = nil
+        try expect(
+            reader.readPetFramesTopLeft(requireLiveOverlay: true) == nil,
+            "expected minimizing or moving the pet to another Space to hide the rings"
+        )
+
+        liveOverlay = CGRect(x: 400, y: 500, width: 180, height: 180)
+        try writeState(open: false)
+        try expect(
+            reader.readPetFramesTopLeft(requireLiveOverlay: true) == nil,
+            "expected an explicitly closed pet to remain hidden even if a stale window candidate is supplied"
+        )
+    }
+
+    private static func testPetDragLiveMismatchGate() throws {
+        let predicted = CGRect(x: 100, y: 100, width: 64, height: 64)
+        let nearbyLive = CGRect(x: 120, y: 110, width: 64, height: 64)
+        let distantLive = CGRect(x: 420, y: 410, width: 64, height: 64)
+        try expect(
+            petDragLiveFrameIsClose(nearbyLive, to: predicted),
+            "expected a nearby live drag frame to remain attached"
+        )
+        try expect(
+            !petDragLiveFrameIsClose(distantLive, to: predicted),
+            "expected an unrelated live window to fail the drag mismatch gate"
+        )
+    }
+
+    private static func testCodexApplicationVisibilityGate() throws {
+        try expect(
+            codexApplicationCanPresentPet(
+                bundleIdentifier: "com.openai.codex",
+                ownerName: "ChatGPT",
+                isHidden: false,
+                isTerminated: false
+            ),
+            "expected a visible current Codex app to authorize its pet window"
+        )
+        try expect(
+            !codexApplicationCanPresentPet(
+                bundleIdentifier: "com.openai.codex",
+                ownerName: "ChatGPT",
+                isHidden: true,
+                isTerminated: false
+            ),
+            "expected a hidden Codex app to suppress a lingering pet window"
+        )
+        try expect(
+            !codexApplicationCanPresentPet(
+                bundleIdentifier: "com.openai.codex",
+                ownerName: "ChatGPT",
+                isHidden: false,
+                isTerminated: true
+            ),
+            "expected a terminated Codex app to suppress stale window metadata"
+        )
+        try expect(
+            codexApplicationCanPresentPet(
+                bundleIdentifier: nil,
+                ownerName: "Codex",
+                isHidden: false,
+                isTerminated: false
+            ),
+            "expected the visible legacy Codex owner-name fallback to remain compatible"
+        )
     }
 
     private static func testAppServerRateLimitDecode() throws {

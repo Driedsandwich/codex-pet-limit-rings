@@ -92,6 +92,13 @@ The first downstream parent commit changes live pet-window matching from the vis
 - Restore the ring automatically if a later live notification or full snapshot reports the short window again.
 - Keep all observations read-only and memory-only, with no new permission, persistence, or account mutation.
 
+## v1.0.4 Pet Lifecycle Visibility
+
+- Require a matching live, on-screen Codex pet overlay before drawing rings; persisted global-state bounds are positioning references only.
+- Hide stale rings when Codex exits, the pet closes, or its overlay is minimized or on another Space.
+- Restore the rings through the existing state-file watcher and two-second fallback when the live pet overlay returns.
+- Preserve drag mismatch protection, multi-display coordinates, read-only data access, and the existing permission boundary.
+
 ## Known Compatibility Risks
 
 - The Codex app-server command is still labeled experimental even though the rate-limit methods used here are present in its stable generated schema.
