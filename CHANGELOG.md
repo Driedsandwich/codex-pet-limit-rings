@@ -4,6 +4,10 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
+No changes yet.
+
+## 1.0.3 - 2026-07-13
+
 ### Optional Short-Window Compatibility
 
 - Treat the short-window bucket as optional when Codex temporarily stops reporting it.
