@@ -4,7 +4,12 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
-No changes yet.
+### Full Snapshot Deadline
+
+- Anchor the connected 120-second full-snapshot reconcile to the last successful full read instead of any sparse live observation.
+- Keep sparse notifications from postponing snapshot metadata refreshes across a rate-limit window rollover.
+- Show full-snapshot metadata freshness separately from live value freshness in Connection Health.
+- Preserve the single in-flight request gate, five-second timeout, sparse/full race merge, and bounded reconnect backoff.
 
 ## 1.0.1 - 2026-07-11
 
