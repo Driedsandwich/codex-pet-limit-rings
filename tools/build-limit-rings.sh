@@ -14,14 +14,18 @@ cp "$PLIST" "$APP/Contents/Info.plist"
 if [[ -d "$ROOT/resources" ]]; then
   cp -R "$ROOT/resources/." "$RESOURCES/"
 fi
-swiftc \
-  -parse-as-library \
-  -target "arm64-apple-macosx$DEPLOYMENT_TARGET" \
-  "$ROOT/tools/codex-pet-limit-rings.swift" \
-  -o "$BIN" \
-  -framework AppKit \
-  -framework UserNotifications \
-  -lsqlite3
+(
+  cd "$ROOT"
+  swiftc \
+    -parse-as-library \
+    -target "arm64-apple-macosx$DEPLOYMENT_TARGET" \
+    -file-prefix-map "$ROOT=." \
+    tools/codex-pet-limit-rings.swift \
+    -o "$BIN" \
+    -framework AppKit \
+    -framework UserNotifications \
+    -lsqlite3
+)
 
 if command -v codesign >/dev/null 2>&1; then
   codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
