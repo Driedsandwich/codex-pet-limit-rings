@@ -2,13 +2,18 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
-## Unreleased
+## 1.0.4 - 2026-07-13
 
 ### Pet Lifecycle Visibility
 
 - Require a live, on-screen Codex pet overlay before showing the rings instead of trusting stale persisted bounds.
 - Hide the rings when Codex exits, the pet closes, or its overlay is minimized or on another Space.
 - Restore the rings automatically when the live pet overlay returns, while preserving drag tracking and multi-display coordinates.
+
+### Release Hardening
+
+- Compile release binaries from a relative source path with Swift file-prefix mapping so build-machine paths are not embedded.
+- Verify both the direct release-check binary and the app binary re-extracted from a ZIP, failing if a local absolute path or packaged binary is missing.
 
 ## 1.0.3 - 2026-07-13
 

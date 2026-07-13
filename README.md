@@ -63,6 +63,8 @@ The published v1.0.2 release anchors that reconcile deadline to the last success
 
 The published v1.0.3 release handles the current weekly-only response after the five-hour short-window limit stopped being reported. It classifies windows by duration, removes stale short-window display and notification history, preserves sparse/full race safety, and restores the short ring automatically if Codex reports it again.
 
+The published v1.0.4 release hides the rings whenever no live, on-screen Codex pet overlay exists and restores them when the pet returns. Its release build also removes build-machine source paths and verifies both the direct binary and the app binary re-extracted from the ZIP.
+
 </details>
 
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
@@ -79,15 +81,15 @@ Pet wakeups are handled by a lightweight filesystem watcher on Codex's local glo
 
 ## Quick Start
 
-### Install The Published v1.0.3 App
+### Install The Published v1.0.4 App
 
-The published v1.0.3 app supports macOS 15 and later on Apple silicon. The verified source and package gates pass on macOS 15 and macOS 26.
+The published v1.0.4 app supports macOS 15 and later on Apple silicon. The verified source and package gates pass on macOS 15 and macOS 26.
 
-Download the app and checksum from the [v1.0.3 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.3), then verify the ZIP before opening it. The expected ZIP SHA-256 is `9a11a29a2828dff36f1e033236b75c4a9c7940319b3ff10aa11e42a0c72ebd6c`.
+Download the app and checksum from the [v1.0.4 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.4), then verify the ZIP before opening it. The expected ZIP SHA-256 is `e7bbe9ea1e9687c4bf3163f4841ae70bd37ae5561f972c28c957f19fb6c05598`.
 
 ```bash
-version=1.0.3
-expected_sha=9a11a29a2828dff36f1e033236b75c4a9c7940319b3ff10aa11e42a0c72ebd6c
+version=1.0.4
+expected_sha=e7bbe9ea1e9687c4bf3163f4841ae70bd37ae5561f972c28c957f19fb6c05598
 release_dir="$HOME/Downloads/CodexPetLimitRings-v$version"
 base_url="https://github.com/Driedsandwich/codex-pet-limit-rings/releases/download/v$version"
 
@@ -104,7 +106,7 @@ codesign --verify --deep --strict CodexPetLimitRings.app
 Back up an existing installation, stop its LaunchAgent, and replace it with the verified app:
 
 ```bash
-version=1.0.3
+version=1.0.4
 release_dir="${release_dir:-$HOME/Downloads/CodexPetLimitRings-v$version}"
 backup="$HOME/Library/Application Support/CodexPetLimitRings/Backups/$(date +%Y%m%d-%H%M%S)"
 app="$HOME/Applications/CodexPetLimitRings.app"
@@ -279,13 +281,13 @@ tools/package-release.sh
 Smoke-test the published release without replacing the installed app:
 
 ```bash
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.3
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.4
 ```
 
 On an older macOS host, perform checksum, signature, architecture, version, and deployment-target inspection without launching the binary:
 
 ```bash
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.3 --inspect-only
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.4 --inspect-only
 ```
 
 ## Experiments
