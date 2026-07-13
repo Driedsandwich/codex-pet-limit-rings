@@ -24,12 +24,12 @@ Build the release package and checksum:
 tools/package-release.sh
 ```
 
-Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The published v1.0.3 package is ad-hoc signed and not notarized. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, and confirm English and Japanese localization resources are present.
+Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The published v1.0.4 package is ad-hoc signed and not notarized. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, confirm English and Japanese localization resources are present, and confirm the re-extracted binary contains no local build-machine path.
 
 The packaging command verifies its checksum before returning. To repeat that check manually, run it from `dist/` so the relative archive name resolves:
 
 ```bash
-(cd dist && shasum -a 256 -c CodexPetLimitRings-v1.0.3-macos-arm64.zip.sha256)
+(cd dist && shasum -a 256 -c CodexPetLimitRings-v1.0.4-macos-arm64.zip.sha256)
 ```
 
 ## Runtime Gate
@@ -51,6 +51,24 @@ Confirm the menu-bar source is `App Server`, `Cached`, or `Local`, full limit de
 - Confirm no local paths, logs, state files, screenshots with private content, or `tmp/` artifacts are included.
 - Create the fork, push, upstream PR, and downstream release as separate operations.
 - Record the fork URL, commit/tag, CI result, PR URL/status, and known limitations.
+
+### Published v1.0.4 Evidence
+
+- Release commit and target: `f4e60ef0e3aa099f64846eca0c45e9deb5322c28`.
+- Tag and Release: [`v1.0.4`](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.4).
+- Release ZIP SHA-256: `e7bbe9ea1e9687c4bf3163f4841ae70bd37ae5561f972c28c957f19fb6c05598`.
+- Packaged architecture: Apple silicon `arm64`.
+- Packaged minimum OS: macOS `15.0` in both `LSMinimumSystemVersion` and the Mach-O build command.
+- Signing status: ad-hoc signed and not notarized.
+- Merge-commit CI passed on macOS 15 and macOS 26 (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29214710222`).
+- Installed-candidate checks covered live pet disappearance and restoration, alignment, notifications off, and privacy-safe diagnostics.
+- The published artifact smoke test passed checksum, signature, architecture, version, deployment-target, English/Japanese resources, preview-execution, and privacy-safe diagnostic checks:
+
+```bash
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.4
+```
+
+- A separate public-asset re-download scan confirmed that the ZIP-contained binary has no local build-machine path; the release verifier independently checks both its direct binary and a re-extracted packaged app binary.
 
 ### Published v1.0.3 Evidence
 
