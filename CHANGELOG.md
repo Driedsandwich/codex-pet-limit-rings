@@ -2,7 +2,7 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
-## Unreleased 1.0.5
+## 1.0.5 - 2026-07-15
 
 ### Full Snapshot Watchdog
 
