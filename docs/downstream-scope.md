@@ -99,7 +99,7 @@ The first downstream parent commit changes live pet-window matching from the vis
 - Restore the rings through the existing state-file watcher and two-second fallback when the live pet overlay returns.
 - Preserve drag mismatch protection, multi-display coordinates, read-only data access, and the existing permission boundary.
 
-## v1.0.5 Full Snapshot Watchdog Candidate
+## v1.0.5 Full Snapshot Watchdog
 
 - Replace the one-shot main-run-loop reconcile timer with a persistent watchdog driven by monotonic continuous time.
 - Require a full snapshot every 120 seconds even during continuous sparse notifications, after an early tick, after a missed tick, or after sleep/wake.
