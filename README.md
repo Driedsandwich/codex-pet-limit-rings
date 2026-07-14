@@ -32,7 +32,7 @@ This fork keeps the original companion-app design and MIT license, then extends 
 
 | Area | Upstream foundation | This fork (current source) |
 | --- | --- | --- |
-| Desktop compatibility | External overlay that follows the Codex pet | Current ChatGPT/Codex window matching, multi-display tracking, long-lived app-server updates, bounded reconnect/fallback, and a full-snapshot deadline that sparse events cannot postpone |
+| Desktop compatibility | External overlay that follows the Codex pet | Current ChatGPT/Codex window matching, multi-display tracking, long-lived app-server updates, bounded reconnect/fallback, and a persistent monotonic full-snapshot watchdog that sparse events cannot postpone |
 | Limit information | Two glanceable remaining-capacity rings | All available limit buckets, credits, monthly caps, limit reasons, reset-credit counts, reset metadata freshness, and privacy-safe connection health; all account access remains read-only |
 | Usage and alerts | Ring visualization | Memory-only 14-day account usage and aggregate milestones, plus optional 25%, 10%, and recovery notifications that remain off until enabled |
 | Accessibility and language | Visual ring status | Reduced Motion, Increase Contrast, Differentiate Without Color, text/symbol status cues, and English/Japanese UI |
@@ -64,6 +64,8 @@ The published v1.0.2 release anchors that reconcile deadline to the last success
 The published v1.0.3 release handles the current weekly-only response after the five-hour short-window limit stopped being reported. It classifies windows by duration, removes stale short-window display and notification history, preserves sparse/full race safety, and restores the short ring automatically if Codex reports it again.
 
 The published v1.0.4 release hides the rings whenever no live, on-screen Codex pet overlay exists and restores them when the pet returns. Its release build also removes build-machine source paths and verifies both the direct binary and the app binary re-extracted from the ZIP.
+
+The unreleased v1.0.5 candidate replaces the one-shot full-snapshot timer with a persistent monotonic watchdog. It retries overdue reads through the existing timeout and reconnect path, and labels old full metadata as stale rather than live without adding persistence, permissions, or account mutation.
 
 </details>
 
