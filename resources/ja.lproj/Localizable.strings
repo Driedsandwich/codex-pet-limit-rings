@@ -10,6 +10,7 @@
 "summary.weekly" = "週間 %@";
 "summary.noData" = "現在のCodex利用上限データはありません";
 "source.appServer" = "App Server";
+"source.stale" = "! 古いデータ";
 "source.cached" = "キャッシュ";
 "source.local" = "ローカル";
 "source.unknown" = "不明";
@@ -38,10 +39,12 @@
 "duration.minuteShort" = "分";
 "duration.secondShort" = "秒";
 "connection.live" = "● app-serverからライブ更新中";
+"connection.stale" = "! 全体スナップショットが古い状態です · 更新待ち";
 "connection.reconnecting" = "↻ app-serverへ再接続中";
 "connection.pollFallback" = "↙ 再接続中・ポーリングで補完";
 "connection.source" = "利用上限のデータ源: %@";
 "connection.sourceLive" = "ライブ";
+"connection.sourceStale" = "古いapp-serverスナップショット";
 "connection.sourceCached" = "キャッシュ";
 "connection.sourceLocal" = "ローカル";
 "connection.sourceWaiting" = "待機中";

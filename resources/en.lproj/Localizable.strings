@@ -10,6 +10,7 @@
 "summary.weekly" = "Weekly %@";
 "summary.noData" = "No current Codex limit data";
 "source.appServer" = "App Server";
+"source.stale" = "! Stale";
 "source.cached" = "Cached";
 "source.local" = "Local";
 "source.unknown" = "Unknown";
@@ -38,10 +39,12 @@
 "duration.minuteShort" = "m";
 "duration.secondShort" = "s";
 "connection.live" = "● Live app-server updates";
+"connection.stale" = "! Stale full snapshot · refresh pending";
 "connection.reconnecting" = "↻ Reconnecting to app-server";
 "connection.pollFallback" = "↙ Poll fallback while reconnecting";
 "connection.source" = "Rate-limit source: %@";
 "connection.sourceLive" = "Live";
+"connection.sourceStale" = "Stale app-server snapshot";
 "connection.sourceCached" = "Cached";
 "connection.sourceLocal" = "Local";
 "connection.sourceWaiting" = "Waiting";

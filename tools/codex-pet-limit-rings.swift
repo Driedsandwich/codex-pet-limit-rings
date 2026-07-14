@@ -86,6 +86,7 @@ func normalizedMainLimitBuckets(
 
 private let limitStatePollInterval: TimeInterval = 20.0
 private let liveRateLimitReconcileInterval: TimeInterval = 120.0
+private let fullSnapshotWatchdogTickInterval: TimeInterval = 1.0
 private let fullSnapshotFreshnessMaxAge: TimeInterval = liveRateLimitReconcileInterval
 private let dailyUsageRefreshInterval: TimeInterval = 15 * 60
 private let dailyUsageDisplayCount = 14
@@ -177,29 +178,45 @@ struct RateLimitRequestGate {
     }
 }
 
-func fullSnapshotReconcileDelay(
-    lastFullSyncAt: Date?,
-    now: Date = Date(),
+func fullSnapshotWatchdogDelay(
+    lastFullSyncUptime: TimeInterval?,
+    nowUptime: TimeInterval,
     interval: TimeInterval = liveRateLimitReconcileInterval,
     isConnected: Bool
 ) -> TimeInterval? {
-    guard isConnected, let lastFullSyncAt else { return nil }
-    return max(0, interval - now.timeIntervalSince(lastFullSyncAt))
+    guard isConnected, let lastFullSyncUptime else { return nil }
+    return max(0, interval - (nowUptime - lastFullSyncUptime))
 }
 
-func shouldRunFullSnapshotReconcile(
-    lastFullSyncAt: Date?,
-    now: Date = Date(),
+func shouldRunFullSnapshotWatchdog(
+    lastFullSyncUptime: TimeInterval?,
+    nowUptime: TimeInterval,
     interval: TimeInterval = liveRateLimitReconcileInterval,
     isConnected: Bool
 ) -> Bool {
-    guard let delay = fullSnapshotReconcileDelay(
-        lastFullSyncAt: lastFullSyncAt,
-        now: now,
+    guard let delay = fullSnapshotWatchdogDelay(
+        lastFullSyncUptime: lastFullSyncUptime,
+        nowUptime: nowUptime,
         interval: interval,
         isConnected: isConnected
     ) else { return false }
     return delay == 0
+}
+
+func fullSnapshotWatchdogFreshness(
+    lastFullSyncUptime: TimeInterval?,
+    nowUptime: TimeInterval,
+    maxAge: TimeInterval = fullSnapshotFreshnessMaxAge
+) -> DataFreshnessState {
+    guard let lastFullSyncUptime else { return .waiting }
+    let age = nowUptime - lastFullSyncUptime
+    return age >= 0 && age <= maxAge ? .current : .stale
+}
+
+func continuousUptime() -> TimeInterval {
+    var timebase = mach_timebase_info_data_t()
+    mach_timebase_info(&timebase)
+    return Double(mach_continuous_time()) * Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
 }
 
 func rateLimitDisplaySignature(_ state: LimitState) -> String {
@@ -318,7 +335,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.4"
+    var version = "1.0.5"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -433,12 +450,22 @@ func formattedUsageDuration(seconds: Int64, labels: UsageDurationUnitLabels) -> 
 
 enum ConnectionHealthState: Equatable {
     case live
+    case stale
     case reconnecting
     case pollFallback
 }
 
-func connectionHealthState(isConnected: Bool, limitSource: String) -> ConnectionHealthState {
-    if isConnected { return .live }
+func connectionHealthState(
+    isConnected: Bool,
+    limitSource: String,
+    fullSnapshotFreshness: DataFreshnessState = .current
+) -> ConnectionHealthState {
+    if isConnected {
+        if limitSource == "app-server", fullSnapshotFreshness != .current {
+            return .stale
+        }
+        return .live
+    }
     if limitSource == "cached" || limitSource == "local" { return .pollFallback }
     return .reconnecting
 }
@@ -1018,6 +1045,7 @@ final class AppServerLiveClient {
     private var pendingRateLimitOrigin: RateLimitUpdateOrigin = .initialFullSync
     private var pendingSparseRateLimits: [AppServerRateLimitSnapshot] = []
     private var reconnectAttempt = 0
+    private var reconnectScheduled = false
     private var connectionGeneration = 0
     private var identifiedCLIPath: String?
     private var ready = false
@@ -1206,7 +1234,12 @@ final class AppServerLiveClient {
     }
 
     private func sendRateLimitRequest(origin: RateLimitUpdateOrigin) {
-        guard process?.isRunning == true else { return }
+        guard process?.isRunning == true else {
+            guard !stopped else { return }
+            reportDisconnected("app_server_disconnected")
+            scheduleReconnect()
+            return
+        }
         guard let requestToken = rateLimitRequestGate.begin() else {
             pendingRateLimitOrigin = coalescedRateLimitRequestOrigin(
                 current: pendingRateLimitOrigin,
@@ -1265,12 +1298,15 @@ final class AppServerLiveClient {
     }
 
     private func scheduleReconnect() {
-        guard !stopped else { return }
+        guard !stopped, !reconnectScheduled else { return }
+        reconnectScheduled = true
         reconnectAttempt += 1
         let delay = appServerReconnectDelay(attempt: reconnectAttempt)
         let generation = connectionGeneration
         queue.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, !self.stopped, generation == self.connectionGeneration else { return }
+            guard let self else { return }
+            self.reconnectScheduled = false
+            guard !self.stopped, generation == self.connectionGeneration else { return }
             self.startConnection()
         }
     }
@@ -1288,6 +1324,9 @@ final class AppServerLiveClient {
         stdin = nil
         stdout = nil
         stderr = nil
+        if stopped {
+            reconnectScheduled = false
+        }
     }
 
     private func write<T: Encodable>(_ payload: T) throws {
@@ -2133,6 +2172,7 @@ final class LimitRingsApp: NSObject {
     private let panel: NSPanel
     private let ringView: LimitRingView
     private let stateQueue = DispatchQueue(label: "codex-pet-limit-rings.state-reader")
+    private let fullSnapshotWatchdogQueue = DispatchQueue(label: "codex-pet-limit-rings.full-snapshot-watchdog")
     private var statusItem: NSStatusItem?
     private var summaryItem: NSMenuItem?
     private var limitDetailsMenu: NSMenu?
@@ -2142,7 +2182,7 @@ final class LimitRingsApp: NSObject {
     private var notificationsItem: NSMenuItem?
     private var stateTimer: Timer?
     private var usageTimer: Timer?
-    private var rateLimitReconcileTimer: Timer?
+    private var fullSnapshotWatchdogSource: DispatchSourceTimer?
     private var frameTimer: Timer?
     private var animationTimer: Timer?
     private var dragFollowTimer: Timer?
@@ -2173,6 +2213,7 @@ final class LimitRingsApp: NSObject {
     private var lastRateLimitObservedAt: Date?
     private var lastLiveRateLimitUpdateAt: Date?
     private var lastFullRateLimitSyncAt: Date?
+    private var lastFullRateLimitSyncUptime: TimeInterval?
     private var lastFullRateLimitSyncOrigin: RateLimitUpdateOrigin?
     private var lastRateLimitValueChangeAt: Date?
     private var lastRateLimitValueChangeOrigin: RateLimitUpdateOrigin?
@@ -2214,7 +2255,7 @@ final class LimitRingsApp: NSObject {
     deinit {
         stateTimer?.invalidate()
         usageTimer?.invalidate()
-        rateLimitReconcileTimer?.invalidate()
+        fullSnapshotWatchdogSource?.cancel()
         frameTimer?.invalidate()
         animationTimer?.invalidate()
         dragFollowTimer?.invalidate()
@@ -2233,6 +2274,7 @@ final class LimitRingsApp: NSObject {
         usageReadInFlight = true
         updateDailyUsageMenu()
         liveClient.start()
+        startFullSnapshotWatchdog()
         updateFrame()
         installGlobalStateWatcher()
         updateRingVisibility()
@@ -2284,8 +2326,6 @@ final class LimitRingsApp: NSObject {
                 self.appServerConnected = connected
                 self.lastConnectionErrorCode = connected ? nil : errorCode
                 if !connected {
-                    self.rateLimitReconcileTimer?.invalidate()
-                    self.rateLimitReconcileTimer = nil
                     if self.dailyUsageSnapshot == nil {
                         self.dailyUsageErrorCode = errorCode
                         self.usageReadInFlight = false
@@ -2328,8 +2368,8 @@ final class LimitRingsApp: NSObject {
                 lastLiveRateLimitUpdateAt = state.observedAt
             case .initialFullSync, .scheduledFullSync, .manualFullSync:
                 lastFullRateLimitSyncAt = state.observedAt
+                lastFullRateLimitSyncUptime = continuousUptime()
                 lastFullRateLimitSyncOrigin = origin
-                scheduleFullSnapshotReconcile()
             case .fallback:
                 break
             }
@@ -2347,23 +2387,33 @@ final class LimitRingsApp: NSObject {
         updateConnectionHealthMenu()
     }
 
-    private func scheduleFullSnapshotReconcile(now: Date = Date()) {
-        rateLimitReconcileTimer?.invalidate()
-        rateLimitReconcileTimer = nil
-        guard let delay = fullSnapshotReconcileDelay(
-            lastFullSyncAt: lastFullRateLimitSyncAt,
-            now: now,
+    private func startFullSnapshotWatchdog() {
+        guard fullSnapshotWatchdogSource == nil else { return }
+        let source = DispatchSource.makeTimerSource(queue: fullSnapshotWatchdogQueue)
+        source.schedule(
+            deadline: .now() + fullSnapshotWatchdogTickInterval,
+            repeating: fullSnapshotWatchdogTickInterval,
+            leeway: .milliseconds(200)
+        )
+        source.setEventHandler { [weak self] in
+            let uptime = continuousUptime()
+            DispatchQueue.main.async {
+                self?.evaluateFullSnapshotWatchdog(nowUptime: uptime)
+            }
+        }
+        fullSnapshotWatchdogSource = source
+        source.resume()
+    }
+
+    private func evaluateFullSnapshotWatchdog(nowUptime: TimeInterval) {
+        updateSummaryMenuItem()
+        updateConnectionHealthMenu(nowUptime: nowUptime)
+        guard shouldRunFullSnapshotWatchdog(
+            lastFullSyncUptime: lastFullRateLimitSyncUptime,
+            nowUptime: nowUptime,
             isConnected: appServerConnected
         ) else { return }
-        rateLimitReconcileTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-            guard let self,
-                  shouldRunFullSnapshotReconcile(
-                    lastFullSyncAt: self.lastFullRateLimitSyncAt,
-                    isConnected: self.appServerConnected
-                  ) else { return }
-            self.rateLimitReconcileTimer = nil
-            self.liveClient.requestRateLimits(origin: .scheduledFullSync)
-        }
+        liveClient.requestRateLimits(origin: .scheduledFullSync)
     }
 
     private func requestDailyUsage() {
@@ -2637,7 +2687,12 @@ final class LimitRingsApp: NSObject {
         } else {
             let source: String
             switch ringView.state.source {
-            case "app-server": source = localized("source.appServer", fallback: "App Server")
+            case "app-server":
+                if currentFullSnapshotFreshness() == .current {
+                    source = localized("source.appServer", fallback: "App Server")
+                } else {
+                    source = localized("source.stale", fallback: "! Stale")
+                }
             case "cached": source = localized("source.cached", fallback: "Cached")
             case "local": source = localized("source.local", fallback: "Local")
             default: source = localized("source.unknown", fallback: "Unknown")
@@ -2769,14 +2824,28 @@ final class LimitRingsApp: NSObject {
         }
     }
 
-    private func updateConnectionHealthMenu() {
+    private func currentFullSnapshotFreshness(nowUptime: TimeInterval = continuousUptime()) -> DataFreshnessState {
+        fullSnapshotWatchdogFreshness(
+            lastFullSyncUptime: lastFullRateLimitSyncUptime,
+            nowUptime: nowUptime
+        )
+    }
+
+    private func updateConnectionHealthMenu(nowUptime: TimeInterval = continuousUptime()) {
         guard let menu = connectionHealthMenu else { return }
         menu.removeAllItems()
+        let fullSnapshotFreshness = currentFullSnapshotFreshness(nowUptime: nowUptime)
 
         let statusTitle: String
-        switch connectionHealthState(isConnected: appServerConnected, limitSource: currentLimitSource) {
+        switch connectionHealthState(
+            isConnected: appServerConnected,
+            limitSource: currentLimitSource,
+            fullSnapshotFreshness: fullSnapshotFreshness
+        ) {
         case .live:
             statusTitle = localized("connection.live", fallback: "● Live app-server updates")
+        case .stale:
+            statusTitle = localized("connection.stale", fallback: "! Stale full snapshot · refresh pending")
         case .reconnecting:
             statusTitle = localized("connection.reconnecting", fallback: "↻ Reconnecting to app-server")
         case .pollFallback:
@@ -2786,7 +2855,12 @@ final class LimitRingsApp: NSObject {
 
         let sourceLabel: String
         switch currentLimitSource {
-        case "app-server": sourceLabel = localized("connection.sourceLive", fallback: "Live")
+        case "app-server":
+            if fullSnapshotFreshness == .current {
+                sourceLabel = localized("connection.sourceLive", fallback: "Live")
+            } else {
+                sourceLabel = localized("connection.sourceStale", fallback: "Stale app-server snapshot")
+            }
         case "cached": sourceLabel = localized("connection.sourceCached", fallback: "Cached")
         case "local": sourceLabel = localized("connection.sourceLocal", fallback: "Local")
         default: sourceLabel = localized("connection.sourceWaiting", fallback: "Waiting")
@@ -2828,6 +2902,7 @@ final class LimitRingsApp: NSObject {
             waitingKey: "connection.lastFullWaiting",
             waitingFallback: "Full sync pending",
             origin: lastFullRateLimitSyncOrigin,
+            freshnessOverride: fullSnapshotFreshness,
             to: menu
         )
         appendCadenceRow(
@@ -2907,14 +2982,16 @@ final class LimitRingsApp: NSObject {
     private func appendFreshnessCadenceRow(
         observedAt: Date?, maxAge: TimeInterval, key: String, fallback: String,
         waitingKey: String, waitingFallback: String,
-        origin: RateLimitUpdateOrigin?, to menu: NSMenu
+        origin: RateLimitUpdateOrigin?,
+        freshnessOverride: DataFreshnessState? = nil,
+        to menu: NSMenu
     ) {
         guard let observedAt, let origin else {
             appendDisabledMenuItem(localized(waitingKey, fallback: waitingFallback), to: menu)
             return
         }
         let time = DateFormatter.localizedString(from: observedAt, dateStyle: .none, timeStyle: .short)
-        let freshness = dataFreshnessState(observedAt: observedAt, maxAge: maxAge)
+        let freshness = freshnessOverride ?? dataFreshnessState(observedAt: observedAt, maxAge: maxAge)
         appendDisabledMenuItem(
             String(
                 format: localized(key, fallback: fallback),
@@ -3070,7 +3147,7 @@ final class LimitRingsApp: NSObject {
 
     private func processNotifications(for state: LimitState) {
         guard notificationsEnabled else { return }
-        let isFresh = state.source == "app-server"
+        let isFresh = state.source == "app-server" && currentFullSnapshotFreshness() == .current
         guard isFresh else { return }
         notificationBands = pruningNotificationBands(
             notificationBands,

@@ -2,6 +2,16 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
+## Unreleased 1.0.5
+
+### Full Snapshot Watchdog
+
+- Replace the one-shot main-run-loop reconcile timer with a persistent monotonic watchdog.
+- Reissue an overdue full snapshot read without letting sparse notifications move the deadline.
+- Keep the single in-flight gate, five-second timeout, manual coalescing, sparse/full merge, and bounded reconnect behavior.
+- Label overdue full-snapshot metadata as stale rather than live, including the last success time and acquisition path in English and Japanese.
+- Keep cadence diagnostics memory-only and exclude stale app-server metadata from notification decisions.
+
 ## 1.0.4 - 2026-07-13
 
 ### Pet Lifecycle Visibility

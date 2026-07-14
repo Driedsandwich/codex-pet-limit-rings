@@ -23,7 +23,7 @@ struct LimitRingsTests {
             try testAppServerRateLimitDecode()
             try testOptionalShortWindowDisappearsAndReturns()
             try testSparseRateLimitMergePreservesSnapshotMetadata()
-            try testFullSnapshotDeadlineAndSingleInFlightGate()
+            try testFullSnapshotWatchdogAndSingleInFlightGate()
             try testWindowRolloverRefreshesSnapshotMetadata()
             try testBufferedSparseUpdatesReapplyAfterFullSnapshot()
             try testRateLimitDisplaySignatureTracksVisibleValues()
@@ -263,29 +263,27 @@ struct LimitRingsTests {
         try expect(merged.rateLimitResetCredits?.availableCount == 2, "expected snapshot-only reset credits to remain")
     }
 
-    private static func testFullSnapshotDeadlineAndSingleInFlightGate() throws {
-        let now = Date(timeIntervalSince1970: 10_000)
-        let lastFullSync = now.addingTimeInterval(-90)
-        try expect(fullSnapshotReconcileDelay(lastFullSyncAt: nil, now: now, interval: 120, isConnected: true) == nil, "expected reconcile to wait for a successful full snapshot")
-        try expect(fullSnapshotReconcileDelay(lastFullSyncAt: lastFullSync, now: now, interval: 120, isConnected: true) == 30, "expected an absolute deadline derived from the last full snapshot")
-        try expect(!shouldRunFullSnapshotReconcile(lastFullSyncAt: now.addingTimeInterval(-119), now: now, interval: 120, isConnected: true), "expected reconcile to wait until 120 seconds")
-        try expect(shouldRunFullSnapshotReconcile(lastFullSyncAt: now.addingTimeInterval(-120), now: now, interval: 120, isConnected: true), "expected reconcile at the 120-second full-snapshot boundary")
-        try expect(!shouldRunFullSnapshotReconcile(lastFullSyncAt: now.addingTimeInterval(-121), now: now, interval: 120, isConnected: false), "expected reconcile to remain disabled while disconnected")
+    private static func testFullSnapshotWatchdogAndSingleInFlightGate() throws {
+        let lastFullSyncUptime = 10_000.0
+        try expect(fullSnapshotWatchdogDelay(lastFullSyncUptime: nil, nowUptime: 10_090, interval: 120, isConnected: true) == nil, "expected watchdog to wait for a successful full snapshot")
+        try expect(fullSnapshotWatchdogDelay(lastFullSyncUptime: lastFullSyncUptime, nowUptime: 10_090, interval: 120, isConnected: true) == 30, "expected an absolute monotonic deadline derived from the last full snapshot")
+        try expect(!shouldRunFullSnapshotWatchdog(lastFullSyncUptime: lastFullSyncUptime, nowUptime: 10_119, interval: 120, isConnected: true), "expected an early watchdog tick not to refresh")
+        try expect(shouldRunFullSnapshotWatchdog(lastFullSyncUptime: lastFullSyncUptime, nowUptime: 10_120, interval: 120, isConnected: true), "expected reconcile at the 120-second full-snapshot boundary")
+        try expect(!shouldRunFullSnapshotWatchdog(lastFullSyncUptime: lastFullSyncUptime, nowUptime: 10_121, interval: 120, isConnected: false), "expected reconcile to remain disabled while disconnected")
 
-        let sparseObservations = [30.0, 60.0, 90.0, 119.0].map { now.addingTimeInterval($0) }
-        for sparseObservedAt in sparseObservations {
-            let deadline = fullSnapshotReconcileDelay(
-                lastFullSyncAt: now,
-                now: sparseObservedAt,
+        for sparseObservedUptime in [10_030.0, 10_060.0, 10_090.0, 10_119.0] {
+            let delay = fullSnapshotWatchdogDelay(
+                lastFullSyncUptime: lastFullSyncUptime,
+                nowUptime: sparseObservedUptime,
                 interval: 120,
                 isConnected: true
             )
-            try expect(deadline == 120 - sparseObservedAt.timeIntervalSince(now), "expected sparse observations not to move the full-snapshot deadline")
+            try expect(delay == 10_120 - sparseObservedUptime, "expected sparse observations not to move the full-snapshot deadline")
         }
-        try expect(
-            shouldRunFullSnapshotReconcile(lastFullSyncAt: now, now: now.addingTimeInterval(120), interval: 120, isConnected: true),
-            "expected continuous sparse notifications not to postpone the full read"
-        )
+        try expect(shouldRunFullSnapshotWatchdog(lastFullSyncUptime: lastFullSyncUptime, nowUptime: 10_125, interval: 120, isConnected: true), "expected a later watchdog tick to recover from a missed timer firing")
+        try expect(shouldRunFullSnapshotWatchdog(lastFullSyncUptime: lastFullSyncUptime, nowUptime: 13_600, interval: 120, isConnected: true), "expected a sleep/wake monotonic jump to trigger an overdue refresh")
+        try expect(fullSnapshotWatchdogFreshness(lastFullSyncUptime: lastFullSyncUptime, nowUptime: 10_120, maxAge: 120) == .current, "expected metadata to remain current at the deadline")
+        try expect(fullSnapshotWatchdogFreshness(lastFullSyncUptime: lastFullSyncUptime, nowUptime: 10_121, maxAge: 120) == .stale, "expected overdue metadata to become stale")
 
         var gate = RateLimitRequestGate()
         guard let first = gate.begin() else {
@@ -308,6 +306,7 @@ struct LimitRingsTests {
         }
         gate.cancel()
         try expect(!gate.inFlight && !gate.isCurrent(second), "expected timeout cancellation to invalidate the active request")
+        try expect(appServerReconnectDelay(attempt: 20) == 30, "expected repeated timeout recovery to retain bounded reconnect")
     }
 
     private static func testWindowRolloverRefreshesSnapshotMetadata() throws {
@@ -480,7 +479,9 @@ struct LimitRingsTests {
         try expect(formattedUsageDuration(seconds: 3_661, labels: labels) == "1h 1m", "expected hour-minute duration")
         try expect(formattedUsageDuration(seconds: 90_061, labels: labels) == "1d 1h", "expected day-hour duration")
 
-        try expect(connectionHealthState(isConnected: true, limitSource: "app-server") == .live, "expected connected app-server state")
+        try expect(connectionHealthState(isConnected: true, limitSource: "app-server", fullSnapshotFreshness: .current) == .live, "expected connected app-server state")
+        try expect(connectionHealthState(isConnected: true, limitSource: "app-server", fullSnapshotFreshness: .stale) == .stale, "expected an overdue full snapshot not to be labelled live")
+        try expect(connectionHealthState(isConnected: true, limitSource: "app-server", fullSnapshotFreshness: .waiting) == .stale, "expected an app-server source without a full snapshot not to be labelled live")
         try expect(connectionHealthState(isConnected: false, limitSource: "none") == .reconnecting, "expected disconnected state without fallback data")
         try expect(connectionHealthState(isConnected: false, limitSource: "cached") == .pollFallback, "expected cached poll fallback state")
         try expect(connectionHealthState(isConnected: false, limitSource: "local") == .pollFallback, "expected local poll fallback state")
