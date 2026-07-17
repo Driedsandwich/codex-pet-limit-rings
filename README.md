@@ -16,6 +16,7 @@ The rings are designed to be glanceable:
 - The inner ring shows the weekly limit remaining; when only the weekly window is reported, it remains correctly identified even if Codex places it in the `primary` field.
 - Color moves from calm green/blue to amber and red as capacity gets low.
 - Hovering over the pet or rings shows the exact percentages at the current ring endpoints.
+- Changing the pet-size slider resizes and recenters the rings with the live pet.
 - A small menu-bar icon exposes all available limit buckets, credits, monthly spend controls, reset credits, and limit status without modifying the account.
 - A Daily Usage submenu shows the latest 14 account-usage days plus current and longest streaks, longest turn, peak day, and lifetime totals, refreshing every 15 minutes without storing usage history.
 - A Connection Health submenu shows the Codex CLI version, live/cached/local/reconnecting state, rate-limit and usage freshness, the last live/full/value-change cadence, and privacy-safe failure reasons using text and symbols rather than color alone.

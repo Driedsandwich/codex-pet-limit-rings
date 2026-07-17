@@ -20,6 +20,7 @@ struct LimitRingsTests {
             try testPetLifecycleRequiresLiveOverlay()
             try testModernPetSurfaceSchemaRequiresNamedLiveWindow()
             try testModernPetSurfaceDerivesMascotSizeWithoutHistory()
+            try testModernPetSurfaceTracksRuntimeSizeChanges()
             try testCodexApplicationVisibilityGate()
             try testPetDragLiveMismatchGate()
             try testAppServerRateLimitDecode()
@@ -204,6 +205,30 @@ struct LimitRingsTests {
             ),
             "expected the permission-free geometry fallback to accept the official pet-effect surface"
         )
+        let maximumEffect = CGRect(x: 3_453, y: 649, width: 480, height: 499)
+        let maximumMascotReference = CGRect(x: 3_581, y: 777, width: 113, height: 122)
+        try expect(
+            isOfficialCodexPetMascotEffectWindow(
+                name: nil,
+                ownerPID: 123,
+                officialCodexPIDs: [123],
+                layer: 2,
+                bounds: maximumEffect,
+                mascotReference: maximumMascotReference
+            ),
+            "expected the permission-free fallback to accept the maximum pet-size effect surface"
+        )
+        try expect(
+            !isOfficialCodexPetMascotEffectWindow(
+                name: nil,
+                ownerPID: 123,
+                officialCodexPIDs: [123],
+                layer: 2,
+                bounds: CGRect(x: 3_000, y: 200, width: 800, height: 900),
+                mascotReference: maximumMascotReference
+            ),
+            "expected oversized unrelated layer-two geometry to remain excluded"
+        )
         try expect(
             !isOfficialCodexPetMascotEffectWindow(
                 name: nil,
@@ -241,6 +266,69 @@ struct LimitRingsTests {
             throw LimitRingsTestError.failed("expected a fresh modern state to derive mascot geometry from the named effect window")
         }
         try expect(frames.mascot == CGRect(x: 3_581, y: 777, width: 113, height: 122), "expected exact center-based modern mascot size derivation")
+    }
+
+    private static func testModernPetSurfaceTracksRuntimeSizeChanges() throws {
+        let root = try temporaryDirectory(named: "modern-pet-size-changes")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent(".codex-global-state.json")
+        var liveEffect = CGRect(x: 1_025, y: 500, width: 210, height: 219)
+
+        func writeState(origin: CGPoint) throws {
+            let payload: [String: Any] = [
+                "electron-avatar-overlay-open": true,
+                "electron-avatar-overlay-bounds": [
+                    "x": origin.x,
+                    "y": origin.y,
+                    "displayId": 3,
+                    "displayBounds": ["x": 0, "y": 0, "width": 1_920, "height": 1_080],
+                    "byDisplayId": [
+                        "1": [
+                            "displayBounds": ["x": 0, "y": 0, "width": 1_470, "height": 956],
+                            "mascot": ["left": 243, "top": 189, "width": 113, "height": 123]
+                        ]
+                    ]
+                ]
+            ]
+            try JSONSerialization.data(withJSONObject: payload).write(to: stateURL)
+        }
+
+        let reader = PetFrameReader(
+            globalStatePath: stateURL,
+            liveMascotEffectProvider: { _ in liveEffect }
+        )
+
+        try writeState(origin: CGPoint(x: 1_081.4, y: 556.7))
+        guard let small = reader.readPetFramesTopLeft(requireLiveOverlay: true) else {
+            throw LimitRingsTestError.failed("expected a reduced modern pet to remain visible")
+        }
+        try expect(
+            abs(small.mascot.width - 97.2) < 0.001 && abs(small.mascot.height - 105.6) < 0.001,
+            "expected the rings to shrink with the current pet instead of restoring historical size"
+        )
+
+        liveEffect = CGRect(x: 980, y: 455, width: 300, height: 309)
+        try writeState(origin: CGPoint(x: 1_040, y: 514.5))
+        guard let large = reader.readPetFramesTopLeft(requireLiveOverlay: true) else {
+            throw LimitRingsTestError.failed("expected an enlarged modern pet to remain visible")
+        }
+        try expect(
+            large.mascot.size == CGSize(width: 180, height: 190),
+            "expected the rings to expand with the current pet instead of restoring historical size"
+        )
+        try expect(
+            large.mascot.midX == liveEffect.midX && large.mascot.midY == liveEffect.midY,
+            "expected every runtime size to stay centered on the live mascot effect"
+        )
+
+        try writeState(origin: CGPoint(x: 1_400, y: 700))
+        guard let invalid = reader.readPetFramesTopLeft(requireLiveOverlay: true) else {
+            throw LimitRingsTestError.failed("expected invalid live derivation to keep the safe historical fallback")
+        }
+        try expect(
+            invalid.mascot.size == CGSize(width: 113, height: 123),
+            "expected stale or impossible geometry to retain the historical safety fallback"
+        )
     }
 
     private static func testPetDragLiveMismatchGate() throws {
