@@ -2,6 +2,15 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
+## 1.0.7 - Unreleased
+
+### Pet Size Tracking
+
+- Resize and recenter the rings when the current ChatGPT pet-size slider changes.
+- Use the live mascot-effect center plus the current saved pet origin instead of forcing older historical dimensions.
+- Accept the larger permission-free pet-effect geometry used at the maximum slider setting.
+- Retain historical size only for missing or impossible live geometry, preserving drag, lifecycle, and multi-display safety.
+
 ## 1.0.6 - 2026-07-17
 
 ### Modern Pet Surface Compatibility

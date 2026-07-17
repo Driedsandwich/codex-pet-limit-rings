@@ -335,7 +335,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.6"
+    var version = "1.0.7"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -1575,8 +1575,12 @@ func isOfficialCodexPetMascotEffectWindow(
     guard layer == 2 else { return false }
     let widthRatio = bounds.width / mascotReference.width
     let heightRatio = bounds.height / mascotReference.height
-    return widthRatio >= 1.35 && widthRatio <= 3.2
-        && heightRatio >= 1.35 && heightRatio <= 3.2
+    let derivedWidth = (bounds.midX - mascotReference.minX) * 2
+    let derivedHeight = (bounds.midY - mascotReference.minY) * 2
+    return widthRatio >= 1.35 && widthRatio <= 5.0
+        && heightRatio >= 1.35 && heightRatio <= 5.0
+        && derivedWidth >= 40 && derivedWidth <= bounds.width
+        && derivedHeight >= 40 && derivedHeight <= bounds.height
 }
 
 final class PetFrameReader {
@@ -1803,14 +1807,13 @@ final class PetFrameReader {
             width: (effectBounds.midX - origin.x) * 2,
             height: (effectBounds.midY - origin.y) * 2
         )
+        // Current ChatGPT updates the saved mascot origin when its size slider
+        // moves but omits explicit dimensions. Keep every valid live-derived
+        // size; historical dimensions are only a safety fallback.
         guard derived.width >= 40,
               derived.height >= 40,
               derived.width <= effectBounds.width,
               derived.height <= effectBounds.height else {
-            return historicalSize
-        }
-        if let historicalSize,
-           (abs(derived.width - historicalSize.width) > 16 || abs(derived.height - historicalSize.height) > 16) {
             return historicalSize
         }
         return derived
