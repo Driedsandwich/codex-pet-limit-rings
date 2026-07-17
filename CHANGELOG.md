@@ -2,6 +2,16 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
+## 1.0.6 - 2026-07-17
+
+### Modern Pet Surface Compatibility
+
+- Restore ring placement for current ChatGPT pet state that omits top-level mascot dimensions.
+- Bind live pet matching to the official `com.openai.codex` process and prefer the named `Codex Pet Mascot Effect` surface when available.
+- Use a permission-free, bounded pet-relative fallback when macOS redacts the pet-effect window name.
+- Reject generic ChatGPT windows, third-party wrappers, and Stage Manager thumbnails as pet evidence.
+- Preserve legacy overlay matching, two-second visibility recovery, drag following, multi-display support, and the existing read-only privacy boundary.
+
 ## 1.0.5 - 2026-07-15
 
 ### Full Snapshot Watchdog
