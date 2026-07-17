@@ -18,6 +18,8 @@ struct LimitRingsTests {
         do {
             try testCodexCLIPathsCoverCurrentChatGPTAppAndPath()
             try testPetLifecycleRequiresLiveOverlay()
+            try testModernPetSurfaceSchemaRequiresNamedLiveWindow()
+            try testModernPetSurfaceDerivesMascotSizeWithoutHistory()
             try testCodexApplicationVisibilityGate()
             try testPetDragLiveMismatchGate()
             try testAppServerRateLimitDecode()
@@ -115,6 +117,130 @@ struct LimitRingsTests {
             reader.readPetFramesTopLeft(requireLiveOverlay: true) == nil,
             "expected an explicitly closed pet to remain hidden even if a stale window candidate is supplied"
         )
+    }
+
+    private static func testModernPetSurfaceSchemaRequiresNamedLiveWindow() throws {
+        let root = try temporaryDirectory(named: "modern-pet-surface")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent(".codex-global-state.json")
+
+        func writeState(open: Bool) throws {
+            let payload: [String: Any] = [
+                "electron-avatar-overlay-open": open,
+                "electron-avatar-overlay-bounds": [
+                    "x": 3_581,
+                    "y": 777,
+                    "displayId": 2,
+                    "displayBounds": ["x": 1_920, "y": 0, "width": 1_920, "height": 1_080],
+                    "byDisplayId": [
+                        "2": ["x": 3_581, "y": 777, "displayId": 2],
+                        "3": [
+                            "displayBounds": ["x": 0, "y": 0, "width": 1_920, "height": 1_080],
+                            "mascot": ["left": 215, "top": 190, "width": 113, "height": 122]
+                        ]
+                    ]
+                ]
+            ]
+            try JSONSerialization.data(withJSONObject: payload).write(to: stateURL)
+        }
+
+        try writeState(open: true)
+        var liveEffect: CGRect? = nil
+        let reader = PetFrameReader(
+            globalStatePath: stateURL,
+            liveMascotEffectProvider: { _ in liveEffect }
+        )
+        try expect(
+            reader.readPetFramesTopLeft(requireLiveOverlay: true) == nil,
+            "expected modern saved coordinates alone not to authorize visible rings"
+        )
+        try expect(
+            reader.readPetFramesTopLeft(requireLiveOverlay: false)?.mascot.size == CGSize(width: 113, height: 122),
+            "expected matching historical display metadata to remain available as a non-visibility reference"
+        )
+
+        liveEffect = CGRect(x: 3_516, y: 712, width: 243, height: 252)
+        guard let restored = reader.readPetFramesTopLeft(requireLiveOverlay: true) else {
+            throw LimitRingsTestError.failed("expected the named modern mascot effect window to restore rings")
+        }
+        guard let liveEffect else {
+            throw LimitRingsTestError.failed("expected the live effect fixture")
+        }
+        try expect(restored.usedLiveOverlay, "expected modern frames to be live-gated")
+        try expect(restored.overlay == liveEffect, "expected the named effect window to drive live drag tracking")
+        try expect(restored.mascot == CGRect(x: 3_581, y: 777, width: 113, height: 122), "expected the modern pet center and historical size to reconstruct the mascot frame")
+        try expect(isCodexPetMascotEffectWindowName("Codex Pet Mascot Effect"), "expected the explicit modern pet window name")
+        try expect(!isCodexPetMascotEffectWindowName("ChatGPT"), "expected generic ChatGPT and Stage Manager windows to remain excluded")
+        try expect(
+            isOfficialCodexPetMascotEffectWindow(
+                name: "Codex Pet Mascot Effect",
+                ownerPID: 123,
+                officialCodexPIDs: [123],
+                layer: 2,
+                bounds: liveEffect,
+                mascotReference: restored.mascot
+            ),
+            "expected the exact effect window from the official app process"
+        )
+        try expect(
+            !isOfficialCodexPetMascotEffectWindow(
+                name: "Codex Pet Mascot Effect",
+                ownerPID: 456,
+                officialCodexPIDs: [123],
+                layer: 2,
+                bounds: liveEffect,
+                mascotReference: restored.mascot
+            ),
+            "expected an identically named wrapper-process window to remain excluded"
+        )
+        try expect(
+            isOfficialCodexPetMascotEffectWindow(
+                name: nil,
+                ownerPID: 123,
+                officialCodexPIDs: [123],
+                layer: 2,
+                bounds: liveEffect,
+                mascotReference: restored.mascot
+            ),
+            "expected the permission-free geometry fallback to accept the official pet-effect surface"
+        )
+        try expect(
+            !isOfficialCodexPetMascotEffectWindow(
+                name: nil,
+                ownerPID: 123,
+                officialCodexPIDs: [123],
+                layer: 3,
+                bounds: liveEffect,
+                mascotReference: restored.mascot
+            ),
+            "expected a redacted generic or Stage Manager surface on another layer to remain excluded"
+        )
+
+        try writeState(open: false)
+        try expect(
+            reader.readPetFramesTopLeft(requireLiveOverlay: true) == nil,
+            "expected an explicitly closed modern pet to remain hidden"
+        )
+    }
+
+    private static func testModernPetSurfaceDerivesMascotSizeWithoutHistory() throws {
+        let root = try temporaryDirectory(named: "modern-pet-surface-no-history")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent(".codex-global-state.json")
+        let payload: [String: Any] = [
+            "electron-avatar-overlay-open": true,
+            "electron-avatar-overlay-bounds": ["x": 3_581, "y": 777, "displayId": 2]
+        ]
+        try JSONSerialization.data(withJSONObject: payload).write(to: stateURL)
+        let effect = CGRect(x: 3_516, y: 712, width: 243, height: 252)
+        let reader = PetFrameReader(
+            globalStatePath: stateURL,
+            liveMascotEffectProvider: { _ in effect }
+        )
+        guard let frames = reader.readPetFramesTopLeft(requireLiveOverlay: true) else {
+            throw LimitRingsTestError.failed("expected a fresh modern state to derive mascot geometry from the named effect window")
+        }
+        try expect(frames.mascot == CGRect(x: 3_581, y: 777, width: 113, height: 122), "expected exact center-based modern mascot size derivation")
     }
 
     private static func testPetDragLiveMismatchGate() throws {

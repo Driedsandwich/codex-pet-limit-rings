@@ -335,7 +335,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.5"
+    var version = "1.0.6"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -1551,16 +1551,47 @@ struct PetFramesTopLeft {
     var usedLiveOverlay: Bool
 }
 
+func isCodexPetMascotEffectWindowName(_ name: String?) -> Bool {
+    name == "Codex Pet Mascot Effect"
+}
+
+func isOfficialCodexPetMascotEffectWindow(
+    name: String?,
+    ownerPID: pid_t?,
+    officialCodexPIDs: Set<pid_t>,
+    layer: CGFloat,
+    bounds: CGRect,
+    mascotReference: CGRect
+) -> Bool {
+    guard let ownerPID, officialCodexPIDs.contains(ownerPID), layer > 0 else { return false }
+    if let name, !name.isEmpty {
+        return isCodexPetMascotEffectWindowName(name)
+    }
+
+    // Window names are redacted for a standalone accessory app unless the user
+    // grants screen-recording access. Keep the app permission-free by accepting
+    // only the current pet-effect layer and its tightly bounded geometry from
+    // the already-verified official ChatGPT process.
+    guard layer == 2 else { return false }
+    let widthRatio = bounds.width / mascotReference.width
+    let heightRatio = bounds.height / mascotReference.height
+    return widthRatio >= 1.35 && widthRatio <= 3.2
+        && heightRatio >= 1.35 && heightRatio <= 3.2
+}
+
 final class PetFrameReader {
     private let globalStatePath: URL
     private let liveOverlayProvider: ((CGRect, CGSize) -> CGRect?)?
+    private let liveMascotEffectProvider: ((CGRect) -> CGRect?)?
 
     init(
         globalStatePath: URL,
-        liveOverlayProvider: ((CGRect, CGSize) -> CGRect?)? = nil
+        liveOverlayProvider: ((CGRect, CGSize) -> CGRect?)? = nil,
+        liveMascotEffectProvider: ((CGRect) -> CGRect?)? = nil
     ) {
         self.globalStatePath = globalStatePath
         self.liveOverlayProvider = liveOverlayProvider
+        self.liveMascotEffectProvider = liveMascotEffectProvider
     }
 
     func readPetFramesTopLeft(
@@ -1573,18 +1604,44 @@ final class PetFrameReader {
               isAvatarOverlayOpen(root),
               let bounds = root["electron-avatar-overlay-bounds"] as? [String: Any],
               let x = number(bounds["x"]),
-              let y = number(bounds["y"]),
-              let overlayWidth = number(bounds["width"]),
-              let overlayHeight = number(bounds["height"]),
-              let mascotPayload = bounds["mascot"] as? [String: Any],
-              let left = number(mascotPayload["left"]),
-              let top = number(mascotPayload["top"]),
-              let width = number(mascotPayload["width"]),
-              let height = number(mascotPayload["height"]) else {
+              let y = number(bounds["y"]) else {
             return nil
         }
 
-        let persistedOverlay = CGRect(x: x, y: y, width: overlayWidth, height: overlayHeight)
+        if let overlayWidth = number(bounds["width"]),
+           let overlayHeight = number(bounds["height"]),
+           let mascotPayload = bounds["mascot"] as? [String: Any],
+           let left = number(mascotPayload["left"]),
+           let top = number(mascotPayload["top"]),
+           let width = number(mascotPayload["width"]),
+           let height = number(mascotPayload["height"]) {
+            return readLegacyPetFramesTopLeft(
+                persistedOverlay: CGRect(x: x, y: y, width: overlayWidth, height: overlayHeight),
+                mascotOffset: CGPoint(x: left, y: top),
+                mascotSize: CGSize(width: width, height: height),
+                preferLiveOverlay: preferLiveOverlay,
+                requireLiveOverlay: requireLiveOverlay,
+                liveReference: liveReference
+            )
+        }
+
+        return readModernPetFramesTopLeft(
+            bounds: bounds,
+            persistedMascotOrigin: CGPoint(x: x, y: y),
+            preferLiveOverlay: preferLiveOverlay,
+            requireLiveOverlay: requireLiveOverlay,
+            liveReference: liveReference
+        )
+    }
+
+    private func readLegacyPetFramesTopLeft(
+        persistedOverlay: CGRect,
+        mascotOffset: CGPoint,
+        mascotSize: CGSize,
+        preferLiveOverlay: Bool,
+        requireLiveOverlay: Bool,
+        liveReference: CGRect?
+    ) -> PetFramesTopLeft? {
         let shouldReadLiveOverlay = preferLiveOverlay || requireLiveOverlay
         let liveOverlay: CGRect?
         if shouldReadLiveOverlay {
@@ -1601,8 +1658,64 @@ final class PetFrameReader {
             return nil
         }
         let overlay = liveOverlay ?? persistedOverlay
-        let mascot = CGRect(x: overlay.minX + left, y: overlay.minY + top, width: width, height: height)
+        let mascot = CGRect(
+            x: overlay.minX + mascotOffset.x,
+            y: overlay.minY + mascotOffset.y,
+            width: mascotSize.width,
+            height: mascotSize.height
+        )
         return PetFramesTopLeft(mascot: mascot, overlay: overlay, usedLiveOverlay: liveOverlay != nil)
+    }
+
+    private func readModernPetFramesTopLeft(
+        bounds: [String: Any],
+        persistedMascotOrigin: CGPoint,
+        preferLiveOverlay: Bool,
+        requireLiveOverlay: Bool,
+        liveReference: CGRect?
+    ) -> PetFramesTopLeft? {
+        let historicalSize = historicalMascotSize(in: bounds)
+        let referenceSize = historicalSize ?? CGSize(width: 113, height: 122)
+        let persistedMascot = CGRect(origin: persistedMascotOrigin, size: referenceSize)
+        let shouldReadLiveEffect = preferLiveOverlay || requireLiveOverlay
+        let liveEffect: CGRect?
+        if shouldReadLiveEffect {
+            let reference = liveReference ?? persistedMascot
+            if let liveMascotEffectProvider {
+                liveEffect = liveMascotEffectProvider(reference)
+            } else {
+                liveEffect = liveCodexMascotEffectBounds(
+                    matching: reference,
+                    mascotReference: persistedMascot
+                )
+            }
+        } else {
+            liveEffect = nil
+        }
+
+        if requireLiveOverlay, liveEffect == nil {
+            return nil
+        }
+
+        guard let liveEffect else {
+            guard let historicalSize else { return nil }
+            let mascot = CGRect(origin: persistedMascotOrigin, size: historicalSize)
+            return PetFramesTopLeft(mascot: mascot, overlay: mascot, usedLiveOverlay: false)
+        }
+
+        let derivedSize = modernMascotSize(
+            origin: persistedMascotOrigin,
+            effectBounds: liveEffect,
+            historicalSize: historicalSize
+        )
+        guard let mascotSize = derivedSize ?? historicalSize else { return nil }
+        let mascot = CGRect(
+            x: liveEffect.midX - mascotSize.width / 2,
+            y: liveEffect.midY - mascotSize.height / 2,
+            width: mascotSize.width,
+            height: mascotSize.height
+        )
+        return PetFramesTopLeft(mascot: mascot, overlay: liveEffect, usedLiveOverlay: true)
     }
 
     func readPetFrameTopLeft(preferLiveOverlay: Bool = false, requireLiveOverlay: Bool = false) -> CGRect? {
@@ -1633,6 +1746,117 @@ final class PetFrameReader {
             return CGFloat(value)
         }
         return nil
+    }
+
+    private func historicalMascotSize(in bounds: [String: Any]) -> CGSize? {
+        func size(in payload: [String: Any]) -> CGSize? {
+            for key in ["mascot", "anchor"] {
+                guard let frame = payload[key] as? [String: Any],
+                      let width = number(frame["width"]),
+                      let height = number(frame["height"]),
+                      width >= 40,
+                      height >= 40 else { continue }
+                return CGSize(width: width, height: height)
+            }
+            return nil
+        }
+
+        let currentDisplayBounds = bounds["displayBounds"] as? [String: Any]
+        let currentWidth = number(currentDisplayBounds?["width"])
+        let currentHeight = number(currentDisplayBounds?["height"])
+        var candidates: [[String: Any]] = []
+
+        if let displayID = bounds["displayId"] as? NSNumber,
+           let byDisplay = bounds["byDisplayId"] as? [String: Any],
+           let current = byDisplay[String(displayID.intValue)] as? [String: Any] {
+            candidates.append(current)
+        }
+        if let currentWidth, let currentHeight {
+            for containerKey in ["byDisplayId", "byResolution"] {
+                guard let container = bounds[containerKey] as? [String: Any] else { continue }
+                for key in container.keys.sorted() {
+                    guard let candidate = container[key] as? [String: Any],
+                          let display = candidate["displayBounds"] as? [String: Any],
+                          number(display["width"]) == currentWidth,
+                          number(display["height"]) == currentHeight else { continue }
+                    candidates.append(candidate)
+                }
+            }
+        }
+        for containerKey in ["byDisplayId", "byResolution"] {
+            guard let container = bounds[containerKey] as? [String: Any] else { continue }
+            for key in container.keys.sorted() {
+                if let candidate = container[key] as? [String: Any] {
+                    candidates.append(candidate)
+                }
+            }
+        }
+        return candidates.compactMap(size).first
+    }
+
+    private func modernMascotSize(
+        origin: CGPoint,
+        effectBounds: CGRect,
+        historicalSize: CGSize?
+    ) -> CGSize? {
+        let derived = CGSize(
+            width: (effectBounds.midX - origin.x) * 2,
+            height: (effectBounds.midY - origin.y) * 2
+        )
+        guard derived.width >= 40,
+              derived.height >= 40,
+              derived.width <= effectBounds.width,
+              derived.height <= effectBounds.height else {
+            return historicalSize
+        }
+        if let historicalSize,
+           (abs(derived.width - historicalSize.width) > 16 || abs(derived.height - historicalSize.height) > 16) {
+            return historicalSize
+        }
+        return derived
+    }
+
+    private func liveCodexMascotEffectBounds(
+        matching reference: CGRect,
+        mascotReference: CGRect
+    ) -> CGRect? {
+        let options = CGWindowListOption(arrayLiteral: .optionOnScreenOnly, .excludeDesktopElements)
+        guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+
+        // Per-window NSRunningApplication metadata can be incomplete in a
+        // long-lived accessory app. Bind the exact pet-effect window name to
+        // the already-identified official ChatGPT/Codex process instead.
+        let officialCodexPIDs = Set(
+            NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex")
+                .map(\.processIdentifier)
+        )
+
+        return windows.compactMap { window -> CGRect? in
+            let ownerPID = (window[kCGWindowOwnerPID as String] as? NSNumber).map { pid_t($0.int32Value) }
+            guard let layer = number(window[kCGWindowLayer as String]),
+                  let payload = window[kCGWindowBounds as String] as? [String: Any],
+                  let x = number(payload["X"]),
+                  let y = number(payload["Y"]),
+                  let width = number(payload["Width"]),
+                  let height = number(payload["Height"]),
+                  width >= 40,
+                  height >= 40 else {
+                return nil
+            }
+            let bounds = CGRect(x: x, y: y, width: width, height: height)
+            guard isOfficialCodexPetMascotEffectWindow(
+                name: window[kCGWindowName as String] as? String,
+                ownerPID: ownerPID,
+                officialCodexPIDs: officialCodexPIDs,
+                layer: layer,
+                bounds: bounds,
+                mascotReference: mascotReference
+            ) else { return nil }
+            return bounds
+        }
+        .min { distanceSquared($0.center, to: reference) < distanceSquared($1.center, to: reference) }
     }
 
     private func liveCodexOverlayBounds(matching reference: CGRect, expectedSize: CGSize) -> CGRect? {
@@ -1692,6 +1916,10 @@ final class PetFrameReader {
         let dy = point.y - rect.midY
         return dx * dx + dy * dy
     }
+}
+
+private extension CGRect {
+    var center: CGPoint { CGPoint(x: midX, y: midY) }
 }
 
 struct AccessibilityPresentation {
