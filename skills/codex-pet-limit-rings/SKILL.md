@@ -60,8 +60,10 @@ launchctl print "gui/$(id -u)/com.codex-pet.limit-rings" >/dev/null
 
 The rings read:
 
-- One long-lived `codex app-server --stdio` connection using stable `account/rateLimits/read` plus sparse `account/rateLimits/updated` notifications for primary usage-limit data. A persistent monotonic watchdog reconciles 120 seconds after the last successful full snapshot; sparse notifications must not postpone that deadline. One coalesced five-second full read is allowed, sparse updates received in flight must be reapplied afterward, and continued read failure must recreate the connection through bounded backoff.
-- The stable `account/usage/read` method every 15 minutes for a memory-only, last-14-days daily usage view.
+OpenAI documents `codex app-server` as experimental and subject to change without notice. Treat the methods below as the currently tested compatibility contract, not as permanently stable APIs.
+
+- One long-lived `codex app-server --stdio` connection using `account/rateLimits/read` plus sparse `account/rateLimits/updated` notifications for primary usage-limit data. A persistent monotonic watchdog reconciles 120 seconds after the last successful full snapshot; sparse notifications must not postpone that deadline. One coalesced five-second full read is allowed, sparse updates received in flight must be reapplied afterward, and continued read failure must recreate the connection through bounded backoff.
+- The `account/usage/read` method every 15 minutes for a memory-only, last-14-days daily usage view.
 - `~/.codex/.codex-global-state.json` for `electron-avatar-overlay-open`, saved pet coordinates, and legacy `electron-avatar-overlay-bounds.mascot` metadata when present. Current ChatGPT builds may omit the top-level mascot size.
 - The newest existing `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite` for fallback to the newest current `codex.rate_limits` event when app-server fails.
 
