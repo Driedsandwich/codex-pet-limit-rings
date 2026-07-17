@@ -1,12 +1,14 @@
 # codex-pet-limit-rings
 
-Codex pets are tiny ambient companions for the work happening in Codex. This project adds one more layer to that idea: your pet can quietly show how much Codex capacity you have left, without turning the app into a dashboard.
+Codex pets are tiny ambient companions for work in the ChatGPT desktop app. This project adds one more layer to that idea: your pet can quietly show how much Codex capacity you have left, without turning ChatGPT into a dashboard.
 
-The experience is a small macOS companion app. It watches where the Codex pet is, draws the available polished limit rings around it, and keeps those rings attached to the pet as it moves. It does not patch Codex, change pet art, or modify the Codex app bundle.
+The experience is a small macOS companion app. It watches where ChatGPT's Codex pet is, draws the available polished limit rings around it, and keeps those rings attached to the pet as it moves. It does not patch ChatGPT, change pet art, or modify the ChatGPT app bundle.
 
-It works with whatever Codex pet you like. Built-in pet, custom pet, tiny dog, robot, weather daemon, or anything else: the app does not care. It only follows the pet window that Codex is already showing.
+It works with whatever Codex pet you like. Built-in pet, custom pet, tiny dog, robot, weather daemon, or anything else: the app does not care. It only follows the pet window that ChatGPT is already showing.
 
 ![Codex Pet Limit Rings around a Codex pet](docs/assets/codex-pet-limit-rings-screenshot.png)
+
+_Example with both the optional short-window limit and the weekly limit available; when ChatGPT reports only the weekly limit, the app shows one correctly identified ring._
 
 ## What You See
 
@@ -23,7 +25,7 @@ The rings are designed to be glanceable:
 - Optional 25%, 10%, and recovery notifications are off by default and request macOS permission only when enabled.
 - Reduced Motion, Increase Contrast, Differentiate Without Color, English, and Japanese are supported.
 
-When Codex exits or the pet is closed, minimized, or moved off the active Space, the rings disappear instead of remaining at stale saved coordinates. When the live pet window comes back, they come back too. On multi-display setups, the rings stay with the pet instead of jumping to whichever screen is focused.
+When ChatGPT exits or the pet is closed, minimized, or moved off the active Space, the rings disappear instead of remaining at stale saved coordinates. When the live pet window comes back, they come back too. On multi-display setups, the rings stay with the pet instead of jumping to whichever screen is focused.
 
 Because the rings are drawn in a separate transparent overlay, they do not need pet-specific sprites, masks, metadata, or configuration. Change pets in Codex and the rings follow the new one automatically.
 
@@ -50,7 +52,7 @@ The published v0.5.1 release sets an explicit macOS 15.0 deployment target for b
 
 The published v0.6.0 release adds read-only limit intelligence, opt-in notifications, accessibility-aware rendering, and English/Japanese UI. It deliberately does not consume reset credits, read daily account usage, or collect per-thread usage.
 
-The published v0.7.0 release adds memory-only Daily Usage Insights through stable app-server `account/usage/read`. It does not collect per-thread usage, inspect transcripts, store usage history, or mutate the account.
+The published v0.7.0 release adds memory-only Daily Usage Insights through the app-server `account/usage/read` method available in the tested schema. It does not collect per-thread usage, inspect transcripts, store usage history, or mutate the account.
 
 The published v0.8.0 release keeps one app-server connection open for immediate sparse rate-limit updates, reconnects with bounded backoff, and adds current-streak, peak-day, and lifetime usage summaries without expanding the privacy boundary.
 
@@ -82,7 +84,7 @@ Publication provenance and current release status are recorded in [PUBLICATION_R
 
 The important design choice is the companion boundary. A menu item inside Codex itself would mean patching Electron app files and redoing that patch after app updates. That is brittle and hard to open source.
 
-`codex-pet-limit-rings` stays outside the Codex app. It reads local pet-position state, asks the bundled Codex app-server for rate limits, and renders its own transparent always-on-top window around the pet. The result is reversible, inspectable, and easy for another Codex agent to install or modify without copying ChatGPT credentials.
+`codex-pet-limit-rings` stays outside the ChatGPT desktop app. It reads local pet-position hints, asks the bundled Codex app-server for rate limits, and renders its own transparent always-on-top window around the pet. The result is reversible, inspectable, and easy for another Codex agent to install or modify without copying ChatGPT credentials.
 
 Pet wakeups are handled by a lightweight filesystem watcher on Codex's local global-state file, with a slow fallback timer as a safety net. That lets the rings snap back when the pet is re-enabled without constantly polling for position changes.
 
@@ -201,10 +203,12 @@ tools/install-codex-skill.sh
 
 ## Data And Privacy
 
-The app asks the Codex app-server for rate limits, then uses local Codex files only as support or fallback:
+The app uses a local stdio connection to the Codex app-server currently bundled with the ChatGPT desktop app, then uses local Codex files only as support or fallback. OpenAI documents [`codex app-server`](https://learn.chatgpt.com/docs/developer-commands?surface=cli#cli-codex-app-server) as experimental and subject to change, so this project treats compatibility as a tested current contract rather than a permanent API guarantee:
 
-- The bundled or installed `codex app-server --stdio` provides the stable `account/rateLimits/read` protocol surface.
-- `~/.codex/.codex-global-state.json` tells it whether the pet is open and where it is.
+- `account/rateLimits/read` provides full rate-limit snapshots, while sparse `account/rateLimits/updated` notifications keep available values current between full reads.
+- `account/usage/read` refreshes the memory-only 14-day usage view every 15 minutes.
+- `~/.codex/.codex-global-state.json` provides saved open-state and geometry hints, but those values alone never make the rings visible. A matching live, on-screen ChatGPT pet surface is required.
+- `CGWindowListCopyWindowInfo` supplies the live pet window's owner, layer, and geometry metadata. The app does not capture window pixels or request Screen Recording or Accessibility permission.
 - The newest available `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite` is used as a local fallback if app-server is unavailable.
 
 It does not read `~/.codex/auth.json`, copy ChatGPT bearer tokens, or call the undocumented `backend-api/wham/usage` endpoint. It does not require an OpenAI API key and does not send pet images, screenshots, prompts, or repo contents anywhere.
@@ -257,7 +261,7 @@ Render a static preview PNG:
 
 ```bash
 deployment_target="$(plutil -extract LSMinimumSystemVersion raw tools/CodexPetLimitRings-Info.plist)"
-swiftc -parse-as-library -target "arm64-apple-macosx$deployment_target" tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -lsqlite3
+swiftc -parse-as-library -target "arm64-apple-macosx$deployment_target" tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -framework UserNotifications -lsqlite3
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 ```
 
@@ -285,7 +289,7 @@ Build an ad-hoc-signed macOS arm64 ZIP and SHA-256 file under ignored `dist/`:
 tools/package-release.sh
 ```
 
-Smoke-test the published release without replacing the installed app:
+CI intentionally smoke-tests v1.0.0 as the long-term published compatibility baseline while building and testing the current source. The manual smoke commands below target the latest published v1.0.7 artifact without replacing the installed app:
 
 ```bash
 EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.7
