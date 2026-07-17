@@ -1,6 +1,6 @@
 # Publication Record
 
-status: v1.0.6-released
+status: v1.0.7-released
 
 ## Source Commits
 
@@ -20,6 +20,7 @@ status: v1.0.6-released
 - v1.0.4 release merge commit: `f4e60ef0e3aa099f64846eca0c45e9deb5322c28`
 - v1.0.5 release merge commit: `84e8daab1fae9182708067c348d94d8d877cb985`
 - v1.0.6 release merge commit: `5ada6aaf67caa6198908f6a062eca766a2503a61`
+- v1.0.7 release merge commit: `96f16fc75c17426c5a752eafa2647ddfed21477c`
 
 ## Publication Targets
 
@@ -124,6 +125,13 @@ status: v1.0.6-released
 - v1.0.6 Release ZIP SHA-256: `e2d82096c47795ec33b557d6260ed37f4353cd39b210740ee79a7730a8292e3b`
 - v1.0.6 Release binary minimum OS: macOS `15.0`
 - v1.0.6 published artifact smoke test passed checksum, local-path sanitization, signature, arm64 architecture, version, minimum OS, English/Japanese resources, preview execution, and privacy-safe diagnostics
+- v1.0.7 feature branch: `codex/v1.0.7-pet-size-tracking` at final pull-request head `1678a65f2180fa08b82bc90f598782c9a1501647`
+- v1.0.7 pull request: `https://github.com/Driedsandwich/codex-pet-limit-rings/pull/32` (merged as `96f16fc75c17426c5a752eafa2647ddfed21477c`)
+- v1.0.7 merge-commit matrix CI: macOS 15 and macOS 26 passed (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/29591638335`)
+- v1.0.7 tag and release: `v1.0.7` at `https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.7`
+- v1.0.7 Release ZIP SHA-256: `5ea1d303b438c8243bec68f22d475a072085e1c08d7b7548421e04b186a78c0e`
+- v1.0.7 Release binary minimum OS: macOS `15.0`
+- v1.0.7 published artifact smoke test passed checksum, local-path sanitization, signature, arm64 architecture, version, minimum OS, English/Japanese resources, preview execution, and privacy-safe diagnostics
 
 ## Lane Order
 
@@ -145,15 +153,17 @@ status: v1.0.6-released
 16. Merge Pet Lifecycle Visibility and Release Path Sanitization, verify main CI, and create tag and release `v1.0.4` from the path-safe merge commit.
 17. Merge Full Snapshot Watchdog, verify main CI, and create tag and release `v1.0.5` from the verified merge commit.
 18. Merge Modern Pet Surface Compatibility, verify main CI and live pet alignment, and create tag and release `v1.0.6` from the verified merge commit.
+19. Merge Pet Size Tracking, verify main CI and the full pet-size slider range, and create tag and release `v1.0.7` from the verified merge commit.
 
-Fork creation, downstream branch pushes, pull requests, merges, and releases through v1.0.6 are complete. Upstream pull request #3 remains open for maintainer review.
+Fork creation, downstream branch pushes, pull requests, merges, and releases through v1.0.7 are complete. Upstream pull request #3 remains open for maintainer review.
 
 ## Release Evidence
 
-- `tools/verify-release.sh` and `tools/package-release.sh`: passed for `v1.0.6` from merge commit `5ada6aaf67caa6198908f6a062eca766a2503a61`.
-- The published v1.0.6 artifact passed checksum, local-path sanitization, signature, arm64 architecture, version, macOS 15.0 deployment-target, English/Japanese resource, preview-execution, and privacy-safe diagnostic checks.
-- v1.0.6 final SHA-256: `e2d82096c47795ec33b557d6260ed37f4353cd39b210740ee79a7730a8292e3b`.
-- Release archive: `CodexPetLimitRings-v1.0.6-macos-arm64.zip`.
+- `tools/verify-release.sh` and `tools/package-release.sh`: passed for `v1.0.7` from merge commit `96f16fc75c17426c5a752eafa2647ddfed21477c`.
+- The published v1.0.7 artifact passed checksum, local-path sanitization, signature, arm64 architecture, version, macOS 15.0 deployment-target, English/Japanese resource, preview-execution, and privacy-safe diagnostic checks.
+- v1.0.7 final SHA-256: `5ea1d303b438c8243bec68f22d475a072085e1c08d7b7548421e04b186a78c0e`.
+- Release archive: `CodexPetLimitRings-v1.0.7-macos-arm64.zip`.
+- The v1.0.6 release remains available as historical provenance with unchanged assets and SHA-256 `e2d82096c47795ec33b557d6260ed37f4353cd39b210740ee79a7730a8292e3b`.
 - The v1.0.5 release remains available as historical provenance with unchanged assets and SHA-256 `eaaa32c870542990429fe2586224c225795f87ebd9ab39259ba8c4c60740e7bb`.
 - The v1.0.4 release remains available as historical provenance with unchanged assets and SHA-256 `e7bbe9ea1e9687c4bf3163f4841ae70bd37ae5561f972c28c957f19fb6c05598`.
 - The v1.0.3 release remains available as historical provenance with unchanged assets and SHA-256 `9a11a29a2828dff36f1e033236b75c4a9c7940319b3ff10aa11e42a0c72ebd6c`.
@@ -172,11 +182,11 @@ Fork creation, downstream branch pushes, pull requests, merges, and releases thr
 
 ## Known Unknowns
 
-- GitHub-hosted macOS CI passed through the v1.0.6 merge commit `5ada6aaf67caa6198908f6a062eca766a2503a61`; current CI uses `actions/checkout@v6` and explicit macOS 15/macOS 26 jobs.
+- GitHub-hosted macOS CI passed through the v1.0.7 merge commit `96f16fc75c17426c5a752eafa2647ddfed21477c`; current CI uses `actions/checkout@v6` and explicit macOS 15/macOS 26 jobs.
 - Upstream maintainer response and merge timing are unknown.
 - The upstream repository does not currently report checks for pull request #3.
-- The v1.0.6 app is ad-hoc signed and not notarized.
+- The v1.0.7 app is ad-hoc signed and not notarized.
 - The historical v0.5.0 binary has a minimum deployment target of macOS 26.0; v0.5.1 supersedes it with a macOS 15.0 minimum deployment target.
 - Pet global-state keys remain an undocumented desktop implementation detail.
 - Whether the five-hour limit removal is temporary or permanent remains unknown; v1.0.3 follows the windows Codex reports rather than hardcoding policy.
-- Upstream pull request #3 remains outside the downstream v1.0.6 release and awaits maintainer review.
+- Upstream pull request #3 remains outside the downstream v1.0.7 release and awaits maintainer review.

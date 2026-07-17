@@ -2,7 +2,7 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
-## 1.0.7 - Unreleased
+## 1.0.7 - 2026-07-17
 
 ### Pet Size Tracking
 
