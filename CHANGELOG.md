@@ -2,7 +2,7 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
-## 1.0.8 - Unreleased
+## 1.0.8 - 2026-07-18
 
 ### ChatGPT Update Recovery
 

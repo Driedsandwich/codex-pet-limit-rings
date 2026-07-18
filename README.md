@@ -74,6 +74,8 @@ The published v1.0.6 release restores ring placement for current ChatGPT pet sur
 
 The published v1.0.7 release resizes and recenters the rings across the current ChatGPT pet-size slider range, including the maximum setting. It derives the runtime pet size from the live mascot-effect center and saved pet origin while preserving lifecycle, drag, multi-display, and privacy boundaries.
 
+The published v1.0.8 release restores the rings after an in-place ChatGPT desktop app update replaces or relaunches the official application process. It observes official app lifecycle events and uses a persistent two-second pet-frame watchdog while preserving the live-window display gate and existing privacy boundary.
+
 </details>
 
 The upstream baseline and the split between upstream-compatible and downstream-only work are recorded in [docs/downstream-scope.md](docs/downstream-scope.md).
@@ -90,15 +92,15 @@ Pet wakeups are handled by a lightweight filesystem watcher on Codex's local glo
 
 ## Quick Start
 
-### Install The Published v1.0.7 App
+### Install The Published v1.0.8 App
 
-The published v1.0.7 app supports macOS 15 and later on Apple silicon. The verified source and package gates pass on macOS 15 and macOS 26, and the published artifact passed the public smoke test.
+The published v1.0.8 app supports macOS 15 and later on Apple silicon. The verified source and package gates pass on macOS 15 and macOS 26, and the published artifact passed the public smoke test.
 
-Download the app and checksum from the [v1.0.7 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.7), then verify the ZIP before opening it. The expected ZIP SHA-256 is `5ea1d303b438c8243bec68f22d475a072085e1c08d7b7548421e04b186a78c0e`.
+Download the app and checksum from the [v1.0.8 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.8), then verify the ZIP before opening it. The expected ZIP SHA-256 is `aa22968d32f82884c45098210e343c6c2ad13aeabdee8b4ff5f3e542894ddd31`.
 
 ```bash
-version=1.0.7
-expected_sha=5ea1d303b438c8243bec68f22d475a072085e1c08d7b7548421e04b186a78c0e
+version=1.0.8
+expected_sha=aa22968d32f82884c45098210e343c6c2ad13aeabdee8b4ff5f3e542894ddd31
 release_dir="$HOME/Downloads/CodexPetLimitRings-v$version"
 base_url="https://github.com/Driedsandwich/codex-pet-limit-rings/releases/download/v$version"
 
@@ -115,7 +117,7 @@ codesign --verify --deep --strict CodexPetLimitRings.app
 Back up an existing installation, stop its LaunchAgent, and replace it with the verified app:
 
 ```bash
-version=1.0.7
+version=1.0.8
 release_dir="${release_dir:-$HOME/Downloads/CodexPetLimitRings-v$version}"
 backup="$HOME/Library/Application Support/CodexPetLimitRings/Backups/$(date +%Y%m%d-%H%M%S)"
 app="$HOME/Applications/CodexPetLimitRings.app"
@@ -289,16 +291,16 @@ Build an ad-hoc-signed macOS arm64 ZIP and SHA-256 file under ignored `dist/`:
 tools/package-release.sh
 ```
 
-CI intentionally smoke-tests v1.0.0 as the long-term published compatibility baseline while building and testing the current source. The manual smoke commands below target the latest published v1.0.7 artifact without replacing the installed app:
+CI intentionally smoke-tests v1.0.0 as the long-term published compatibility baseline while building and testing the current source. The manual smoke commands below target the latest published v1.0.8 artifact without replacing the installed app:
 
 ```bash
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.7
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.8
 ```
 
 On an older macOS host, perform checksum, signature, architecture, version, and deployment-target inspection without launching the binary:
 
 ```bash
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.7 --inspect-only
+EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.8 --inspect-only
 ```
 
 ## Experiments
