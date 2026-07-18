@@ -93,6 +93,7 @@ private let dailyUsageDisplayCount = 14
 private let appServerReconnectMaximumDelay: TimeInterval = 30
 private let petFrameFallbackPollInterval: TimeInterval = 2.0
 private let petFrameStateDebounceInterval: TimeInterval = 0.035
+private let petFrameApplicationLaunchGraceInterval: TimeInterval = 0.35
 private let dragFollowInterval: TimeInterval = 1.0 / 60.0
 let dragLiveMismatchTolerance: CGFloat = 96.0
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
@@ -119,6 +120,10 @@ func codexApplicationCanPresentPet(
 ) -> Bool {
     guard !isHidden, !isTerminated else { return false }
     return bundleIdentifier == "com.openai.codex" || ownerName == "Codex"
+}
+
+func shouldRefreshPetFrameForApplication(bundleIdentifier: String?) -> Bool {
+    bundleIdentifier == "com.openai.codex"
 }
 private let codexCLIVersionTimeout: TimeInterval = 2.0
 private let limitStateFallbackMaxAge: TimeInterval = 30 * 60
@@ -335,7 +340,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.7"
+    var version = "1.0.8"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -2404,6 +2409,7 @@ final class LimitRingsApp: NSObject {
     private let ringView: LimitRingView
     private let stateQueue = DispatchQueue(label: "codex-pet-limit-rings.state-reader")
     private let fullSnapshotWatchdogQueue = DispatchQueue(label: "codex-pet-limit-rings.full-snapshot-watchdog")
+    private let petFrameFallbackQueue = DispatchQueue(label: "codex-pet-limit-rings.pet-frame-fallback")
     private var statusItem: NSStatusItem?
     private var summaryItem: NSMenuItem?
     private var limitDetailsMenu: NSMenu?
@@ -2414,7 +2420,7 @@ final class LimitRingsApp: NSObject {
     private var stateTimer: Timer?
     private var usageTimer: Timer?
     private var fullSnapshotWatchdogSource: DispatchSourceTimer?
-    private var frameTimer: Timer?
+    private var petFrameFallbackSource: DispatchSourceTimer?
     private var animationTimer: Timer?
     private var dragFollowTimer: Timer?
     private var mouseDownMonitor: Any?
@@ -2424,6 +2430,8 @@ final class LimitRingsApp: NSObject {
     private var globalStateSource: DispatchSourceFileSystemObject?
     private var pendingGlobalStateWatcherRestart: DispatchWorkItem?
     private var pendingFrameUpdate: DispatchWorkItem?
+    private var pendingApplicationFrameUpdate: DispatchWorkItem?
+    private var workspaceApplicationObservers: [NSObjectProtocol] = []
     private var startTime = Date()
     private var currentPetFrameAppKit: CGRect?
     private var currentPetOverlayTopLeft: CGRect?
@@ -2487,12 +2495,15 @@ final class LimitRingsApp: NSObject {
         stateTimer?.invalidate()
         usageTimer?.invalidate()
         fullSnapshotWatchdogSource?.cancel()
-        frameTimer?.invalidate()
+        petFrameFallbackSource?.cancel()
         animationTimer?.invalidate()
         dragFollowTimer?.invalidate()
         pendingGlobalStateWatcherRestart?.cancel()
         pendingFrameUpdate?.cancel()
+        pendingApplicationFrameUpdate?.cancel()
         globalStateSource?.cancel()
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        workspaceApplicationObservers.forEach(workspaceCenter.removeObserver)
         liveClient.stop()
         [mouseDownMonitor, mouseDragMonitor, mouseUpMonitor, mouseMoveMonitor].compactMap { $0 }.forEach {
             NSEvent.removeMonitor($0)
@@ -2508,6 +2519,8 @@ final class LimitRingsApp: NSObject {
         startFullSnapshotWatchdog()
         updateFrame()
         installGlobalStateWatcher()
+        installCodexApplicationObservers()
+        startPetFrameFallbackWatchdog()
         updateRingVisibility()
 
         stateTimer = Timer.scheduledTimer(withTimeInterval: limitStatePollInterval, repeats: true) { [weak self] _ in
@@ -2516,9 +2529,6 @@ final class LimitRingsApp: NSObject {
         }
         usageTimer = Timer.scheduledTimer(withTimeInterval: dailyUsageRefreshInterval, repeats: true) { [weak self] _ in
             self?.requestDailyUsage()
-        }
-        frameTimer = Timer.scheduledTimer(withTimeInterval: petFrameFallbackPollInterval, repeats: true) { [weak self] _ in
-            self?.updateFrame()
         }
         installDragFollow()
         animationTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
@@ -2707,6 +2717,59 @@ final class LimitRingsApp: NSObject {
         }
         pendingFrameUpdate = work
         DispatchQueue.main.asyncAfter(deadline: .now() + petFrameStateDebounceInterval, execute: work)
+    }
+
+    private func startPetFrameFallbackWatchdog() {
+        guard petFrameFallbackSource == nil else { return }
+        let source = DispatchSource.makeTimerSource(queue: petFrameFallbackQueue)
+        source.schedule(
+            deadline: .now() + petFrameFallbackPollInterval,
+            repeating: petFrameFallbackPollInterval,
+            leeway: .milliseconds(150)
+        )
+        source.setEventHandler { [weak self] in
+            DispatchQueue.main.async {
+                self?.updateFrame()
+            }
+        }
+        petFrameFallbackSource = source
+        source.resume()
+    }
+
+    private func installCodexApplicationObservers() {
+        guard workspaceApplicationObservers.isEmpty else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        let names: [Notification.Name] = [
+            NSWorkspace.didLaunchApplicationNotification,
+            NSWorkspace.didTerminateApplicationNotification,
+            NSWorkspace.didHideApplicationNotification,
+            NSWorkspace.didUnhideApplicationNotification,
+            NSWorkspace.didActivateApplicationNotification
+        ]
+        workspaceApplicationObservers = names.map { name in
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      shouldRefreshPetFrameForApplication(bundleIdentifier: application.bundleIdentifier) else {
+                    return
+                }
+                self?.refreshPetFrameForApplicationLifecycleChange()
+            }
+        }
+    }
+
+    private func refreshPetFrameForApplicationLifecycleChange() {
+        updateFrame()
+        pendingApplicationFrameUpdate?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingApplicationFrameUpdate = nil
+            self.updateFrame()
+        }
+        pendingApplicationFrameUpdate = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + petFrameApplicationLaunchGraceInterval,
+            execute: work
+        )
     }
 
     private func updateFrame(preferLiveOverlay: Bool = false) {

@@ -2,6 +2,14 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
+## 1.0.8 - Unreleased
+
+### ChatGPT Update Recovery
+
+- Refresh pet-window visibility when the official ChatGPT application launches, terminates, hides, unhides, or activates.
+- Replace the pet-frame main-run-loop timer with a persistent two-second dispatch watchdog.
+- Restore rings after an in-place ChatGPT update replaces the application process without weakening the live-window or privacy gates.
+
 ## 1.0.7 - 2026-07-17
 
 ### Pet Size Tracking

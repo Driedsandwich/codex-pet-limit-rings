@@ -22,6 +22,7 @@ struct LimitRingsTests {
             try testModernPetSurfaceDerivesMascotSizeWithoutHistory()
             try testModernPetSurfaceTracksRuntimeSizeChanges()
             try testCodexApplicationVisibilityGate()
+            try testCodexApplicationLifecycleRefreshGate()
             try testPetDragLiveMismatchGate()
             try testAppServerRateLimitDecode()
             try testOptionalShortWindowDisappearsAndReturns()
@@ -381,6 +382,21 @@ struct LimitRingsTests {
                 isTerminated: false
             ),
             "expected the visible legacy Codex owner-name fallback to remain compatible"
+        )
+    }
+
+    private static func testCodexApplicationLifecycleRefreshGate() throws {
+        try expect(
+            shouldRefreshPetFrameForApplication(bundleIdentifier: "com.openai.codex"),
+            "expected official ChatGPT launch and termination events to refresh pet visibility"
+        )
+        try expect(
+            !shouldRefreshPetFrameForApplication(bundleIdentifier: "com.openai.chatgpt"),
+            "expected a different bundle identifier not to refresh the official pet gate"
+        )
+        try expect(
+            !shouldRefreshPetFrameForApplication(bundleIdentifier: nil),
+            "expected an unidentified application event to be ignored"
         )
     }
 
