@@ -544,15 +544,19 @@ struct LimitRingsTests {
 
     private static func testManualRefreshRecoveryAndGenerationSafety() throws {
         try expect(
-            manualRateLimitRefreshPath(isConnected: true, isSnapshotStale: false) == .connectedFullRead,
+            manualRateLimitRefreshPath(isProcessRunning: true, isReady: true, isSnapshotStale: false) == .connectedFullRead,
             "expected a healthy manual refresh to reuse the live connection"
         )
         try expect(
-            manualRateLimitRefreshPath(isConnected: false, isSnapshotStale: false) == .freshConnection,
+            manualRateLimitRefreshPath(isProcessRunning: false, isReady: false, isSnapshotStale: false) == .freshConnection,
             "expected a disconnected manual refresh to create a fresh connection"
         )
         try expect(
-            manualRateLimitRefreshPath(isConnected: true, isSnapshotStale: true) == .freshConnection,
+            manualRateLimitRefreshPath(isProcessRunning: true, isReady: false, isSnapshotStale: false) == .freshConnection,
+            "expected an initialization stall with a running process to create a fresh connection"
+        )
+        try expect(
+            manualRateLimitRefreshPath(isProcessRunning: true, isReady: true, isSnapshotStale: true) == .freshConnection,
             "expected stale metadata to force a fresh manual connection"
         )
 

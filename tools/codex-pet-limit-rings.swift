@@ -152,10 +152,11 @@ enum RateLimitRefreshPath: String, Equatable {
 }
 
 func manualRateLimitRefreshPath(
-    isConnected: Bool,
+    isProcessRunning: Bool,
+    isReady: Bool,
     isSnapshotStale: Bool
 ) -> RateLimitRefreshPath {
-    if !isConnected || isSnapshotStale {
+    if !isProcessRunning || !isReady || isSnapshotStale {
         return .freshConnection
     }
     return .connectedFullRead
@@ -1156,7 +1157,8 @@ final class AppServerLiveClient {
         queue.async { [weak self] in
             guard let self, !self.stopped else { return }
             let path = manualRateLimitRefreshPath(
-                isConnected: self.ready && self.process?.isRunning == true,
+                isProcessRunning: self.process?.isRunning == true,
+                isReady: self.ready,
                 isSnapshotStale: snapshotIsStale
             )
             self.onRefreshPath?(.manualFullSync, path)
