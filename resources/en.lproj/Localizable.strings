@@ -14,6 +14,7 @@
 "source.cached" = "Cached";
 "source.local" = "Local";
 "source.unknown" = "Unknown";
+"ring.stale" = "Stale";
 "details.short" = "Short window: %@";
 "details.enforcementNotReported" = "Short-window enforcement: not reported by Codex";
 "details.shortNotReported" = "Short window: not reported by Codex";
@@ -60,6 +61,11 @@
 "connection.usageUpdated" = "Usage updated: %@ · %@";
 "connection.usageWaiting" = "Usage update pending";
 "connection.reason" = "Reason: %@";
+"connection.lastFailure" = "Last connection issue: %@ · %@";
+"connection.lastManualRefresh" = "Last manual refresh: %@ · %@";
+"connection.lastManualWaiting" = "Manual refresh not used yet";
+"refresh.connectedFullRead" = "Connected full read";
+"refresh.freshConnection" = "Fresh app-server connection";
 "cadence.origin.initial" = "Initial";
 "cadence.origin.live" = "Live";
 "cadence.origin.scheduled" = "Scheduled";

@@ -146,6 +146,21 @@ enum RateLimitUpdateOrigin: String, Equatable {
     case fallback
 }
 
+enum RateLimitRefreshPath: String, Equatable {
+    case connectedFullRead
+    case freshConnection
+}
+
+func manualRateLimitRefreshPath(
+    isConnected: Bool,
+    isSnapshotStale: Bool
+) -> RateLimitRefreshPath {
+    if !isConnected || isSnapshotStale {
+        return .freshConnection
+    }
+    return .connectedFullRead
+}
+
 func coalescedRateLimitRequestOrigin(
     current: RateLimitUpdateOrigin,
     incoming: RateLimitUpdateOrigin
@@ -183,6 +198,40 @@ struct RateLimitRequestGate {
     }
 }
 
+enum FullSnapshotWatchdogAction: Equatable {
+    case none
+    case requestFullSnapshot
+    case recreateConnection
+}
+
+func fullSnapshotWatchdogAction(
+    lastFullSyncUptime: TimeInterval?,
+    overdueRequestUptime: TimeInterval?,
+    nowUptime: TimeInterval,
+    interval: TimeInterval = liveRateLimitReconcileInterval,
+    requestTimeout: TimeInterval = appServerLimitStateTimeout,
+    isConnected: Bool
+) -> FullSnapshotWatchdogAction {
+    guard shouldRunFullSnapshotWatchdog(
+        lastFullSyncUptime: lastFullSyncUptime,
+        nowUptime: nowUptime,
+        interval: interval,
+        isConnected: isConnected
+    ) else { return .none }
+    guard let overdueRequestUptime else { return .requestFullSnapshot }
+    return nowUptime - overdueRequestUptime >= requestTimeout ? .recreateConnection : .none
+}
+
+func reconnectCallbackIsCurrent(
+    scheduleToken: Int,
+    currentScheduleToken: Int,
+    generation: Int,
+    currentGeneration: Int,
+    stopped: Bool
+) -> Bool {
+    !stopped && scheduleToken == currentScheduleToken && generation == currentGeneration
+}
+
 func fullSnapshotWatchdogDelay(
     lastFullSyncUptime: TimeInterval?,
     nowUptime: TimeInterval,
@@ -216,6 +265,16 @@ func fullSnapshotWatchdogFreshness(
     guard let lastFullSyncUptime else { return .waiting }
     let age = nowUptime - lastFullSyncUptime
     return age >= 0 && age <= maxAge ? .current : .stale
+}
+
+func ringPresentationIsStale(source: String, freshness: DataFreshnessState) -> Bool {
+    source == "app-server" && freshness != .current
+}
+
+func ringReadoutDetail(_ resetText: String?, isStale: Bool, staleLabel: String) -> String? {
+    guard isStale else { return resetText }
+    guard let resetText, !resetText.isEmpty else { return staleLabel }
+    return "\(staleLabel) · \(resetText)"
 }
 
 func continuousUptime() -> TimeInterval {
@@ -340,7 +399,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.8"
+    var version = "1.0.9"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -1035,6 +1094,7 @@ final class AppServerLiveClient {
     typealias UsageHandler = (DailyUsageSnapshot?, String?) -> Void
     typealias ConnectionHandler = (Bool, String?) -> Void
     typealias CLIHandler = (String, String?) -> Void
+    typealias RefreshPathHandler = (RateLimitUpdateOrigin, RateLimitRefreshPath) -> Void
 
     private let codexHome: URL
     private let queue = DispatchQueue(label: "codex-pet-limit-rings.app-server-live")
@@ -1051,7 +1111,9 @@ final class AppServerLiveClient {
     private var pendingSparseRateLimits: [AppServerRateLimitSnapshot] = []
     private var reconnectAttempt = 0
     private var reconnectScheduled = false
+    private var reconnectScheduleToken = 0
     private var connectionGeneration = 0
+    private var nextInitialRateLimitOrigin: RateLimitUpdateOrigin = .initialFullSync
     private var identifiedCLIPath: String?
     private var ready = false
     private var stopped = true
@@ -1060,6 +1122,7 @@ final class AppServerLiveClient {
     var onUsage: UsageHandler?
     var onConnectionChanged: ConnectionHandler?
     var onCLIIdentified: CLIHandler?
+    var onRefreshPath: RefreshPathHandler?
 
     init(codexHome: URL) {
         self.codexHome = codexHome
@@ -1077,6 +1140,8 @@ final class AppServerLiveClient {
         queue.sync {
             stopped = true
             connectionGeneration += 1
+            reconnectScheduleToken += 1
+            reconnectScheduled = false
             closeCurrentProcess()
         }
     }
@@ -1084,6 +1149,32 @@ final class AppServerLiveClient {
     func requestRateLimits(origin: RateLimitUpdateOrigin) {
         queue.async { [weak self] in
             self?.sendRateLimitRequest(origin: origin)
+        }
+    }
+
+    func requestManualRateLimits(snapshotIsStale: Bool) {
+        queue.async { [weak self] in
+            guard let self, !self.stopped else { return }
+            let path = manualRateLimitRefreshPath(
+                isConnected: self.ready && self.process?.isRunning == true,
+                isSnapshotStale: snapshotIsStale
+            )
+            self.onRefreshPath?(.manualFullSync, path)
+            switch path {
+            case .connectedFullRead:
+                self.sendRateLimitRequest(origin: .manualFullSync)
+                self.sendUsageRequest()
+            case .freshConnection:
+                self.recreateConnection(origin: .manualFullSync)
+            }
+        }
+    }
+
+    func recreateRateLimitConnection(origin: RateLimitUpdateOrigin) {
+        queue.async { [weak self] in
+            guard let self, !self.stopped else { return }
+            self.onRefreshPath?(origin, .freshConnection)
+            self.recreateConnection(origin: origin)
         }
     }
 
@@ -1194,7 +1285,9 @@ final class AppServerLiveClient {
         case 1:
             do {
                 try write(AppServerInitializedNotification())
-                sendRateLimitRequest(origin: .initialFullSync)
+                let initialOrigin = nextInitialRateLimitOrigin
+                nextInitialRateLimitOrigin = .initialFullSync
+                sendRateLimitRequest(origin: initialOrigin)
                 sendUsageRequest()
             } catch {
                 failConnection("request_write_failed")
@@ -1285,9 +1378,22 @@ final class AppServerLiveClient {
     }
 
     private func failConnection(_ errorCode: String) {
+        if nextInitialRateLimitOrigin != .manualFullSync {
+            nextInitialRateLimitOrigin = pendingRateLimitOrigin
+        }
         closeCurrentProcess()
         reportDisconnected(errorCode)
         scheduleReconnect()
+    }
+
+    private func recreateConnection(origin: RateLimitUpdateOrigin) {
+        nextInitialRateLimitOrigin = origin
+        connectionGeneration += 1
+        reconnectScheduleToken += 1
+        reconnectScheduled = false
+        closeCurrentProcess()
+        reportDisconnected(nil)
+        startConnection()
     }
 
     private func handleTermination(generation: Int) {
@@ -1297,7 +1403,7 @@ final class AppServerLiveClient {
         scheduleReconnect()
     }
 
-    private func reportDisconnected(_ errorCode: String) {
+    private func reportDisconnected(_ errorCode: String?) {
         ready = false
         onConnectionChanged?(false, errorCode)
     }
@@ -1308,10 +1414,18 @@ final class AppServerLiveClient {
         reconnectAttempt += 1
         let delay = appServerReconnectDelay(attempt: reconnectAttempt)
         let generation = connectionGeneration
+        reconnectScheduleToken += 1
+        let scheduleToken = reconnectScheduleToken
         queue.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
+            guard reconnectCallbackIsCurrent(
+                scheduleToken: scheduleToken,
+                currentScheduleToken: self.reconnectScheduleToken,
+                generation: generation,
+                currentGeneration: self.connectionGeneration,
+                stopped: self.stopped
+            ) else { return }
             self.reconnectScheduled = false
-            guard !self.stopped, generation == self.connectionGeneration else { return }
             self.startConnection()
         }
     }
@@ -1319,6 +1433,7 @@ final class AppServerLiveClient {
     private func closeCurrentProcess() {
         rateLimitRequestGate.cancel()
         pendingSparseRateLimits.removeAll()
+        rateLimitResult = nil
         stdout?.fileHandleForReading.readabilityHandler = nil
         stderr?.fileHandleForReading.readabilityHandler = nil
         stdin?.fileHandleForWriting.closeFile()
@@ -1951,6 +2066,7 @@ struct LimitRingRenderer {
     var state: LimitState
     var phase: Double
     var showsReadout: Bool = false
+    var fullSnapshotFreshness: DataFreshnessState = .current
     var accessibility: AccessibilityPresentation = .standard
 
     func draw(in rect: CGRect) {
@@ -1962,7 +2078,8 @@ struct LimitRingRenderer {
         let center = CGPoint(x: rect.midX, y: rect.midY)
         let minSide = min(rect.width, rect.height)
         let urgency = max(urgency(for: state.primary), urgency(for: state.secondary))
-        let animatedPhase = accessibility.reduceMotion ? 0.0 : phase
+        let isStale = ringPresentationIsStale(source: state.source, freshness: fullSnapshotFreshness)
+        let animatedPhase = accessibility.reduceMotion || isStale ? 0.0 : phase
         let breathe = accessibility.reduceMotion ? CGFloat(0.0) : CGFloat((sin(animatedPhase * 2.0 * .pi) + 1.0) * 0.5)
         let pulse = accessibility.reduceMotion ? CGFloat(1.0) : CGFloat(1.0 + urgency * 0.025 * breathe)
         let outerRadius = (minSide * 0.5 - 16.0) * pulse
@@ -1981,7 +2098,7 @@ struct LimitRingRenderer {
                 color: color(forRemaining: primary.remainingPercent, role: .primary),
                 trackAlpha: accessibility.increaseContrast ? 0.34 : 0.20,
                 phase: animatedPhase,
-                dashPattern: nil
+                dashPattern: isStale ? [4.0, 3.0] : nil
             )
         } else {
             drawMissingRing(context, center: center, radius: outerRadius, lineWidth: 7.0)
@@ -1997,13 +2114,16 @@ struct LimitRingRenderer {
                 color: color(forRemaining: secondary.remainingPercent, role: .secondary),
                 trackAlpha: accessibility.increaseContrast ? 0.28 : 0.14,
                 phase: animatedPhase + 0.18,
-                dashPattern: accessibility.differentiateWithoutColor ? [5.0, 3.0] : nil
+                dashPattern: isStale ? [4.0, 3.0] : (accessibility.differentiateWithoutColor ? [5.0, 3.0] : nil)
             )
         }
 
         drawModelLimitDots(context, center: center, radius: outerRadius + 11.0, state: state)
         if showsReadout {
-            drawLimitReadouts(context, center: center, outerRadius: outerRadius, innerRadius: innerRadius, bounds: rect)
+            drawLimitReadouts(context, center: center, outerRadius: outerRadius, innerRadius: innerRadius, bounds: rect, isStale: isStale)
+        }
+        if isStale {
+            drawStaleIndicator(context, center: center, radius: outerRadius)
         }
         context.restoreGState()
     }
@@ -2121,12 +2241,13 @@ struct LimitRingRenderer {
         context.restoreGState()
     }
 
-    private func drawLimitReadouts(_ context: CGContext, center: CGPoint, outerRadius: CGFloat, innerRadius: CGFloat, bounds: CGRect) {
+    private func drawLimitReadouts(_ context: CGContext, center: CGPoint, outerRadius: CGFloat, innerRadius: CGFloat, bounds: CGRect, isStale: Bool) {
         var readouts: [LimitReadout] = []
+        let staleLabel = localized("ring.stale", fallback: "Stale")
         if let primary = state.primary {
             readouts.append(makeReadout(
-                text: formatPercent(primary.remainingPercent),
-                detailText: formatResetCountdown(primary.resetAt),
+                text: (isStale ? "! " : "") + formatPercent(primary.remainingPercent),
+                detailText: ringReadoutDetail(formatResetCountdown(primary.resetAt), isStale: isStale, staleLabel: staleLabel),
                 center: center,
                 ringRadius: outerRadius,
                 labelRadius: outerRadius + 22.0,
@@ -2138,8 +2259,8 @@ struct LimitRingRenderer {
 
         if let secondary = state.secondary {
             readouts.append(makeReadout(
-                text: formatPercent(secondary.remainingPercent),
-                detailText: formatResetCountdown(secondary.resetAt),
+                text: (isStale ? "! " : "") + formatPercent(secondary.remainingPercent),
+                detailText: ringReadoutDetail(formatResetCountdown(secondary.resetAt), isStale: isStale, staleLabel: staleLabel),
                 center: center,
                 ringRadius: innerRadius,
                 labelRadius: innerRadius + 21.0,
@@ -2152,6 +2273,27 @@ struct LimitRingRenderer {
         for readout in resolveReadoutOverlaps(readouts, bounds: bounds) {
             drawReadout(context, readout: readout)
         }
+    }
+
+    private func drawStaleIndicator(_ context: CGContext, center: CGPoint, radius: CGFloat) {
+        let indicatorCenter = point(center: center, radius: radius + 2.0, angle: CGFloat.pi / 4.0)
+        let rect = CGRect(x: indicatorCenter.x - 9.0, y: indicatorCenter.y - 9.0, width: 18.0, height: 18.0)
+        context.saveGState()
+        context.setFillColor(NSColor(calibratedWhite: 0.08, alpha: 0.92).cgColor)
+        context.fillEllipse(in: rect)
+        context.setStrokeColor(NSColor.white.withAlphaComponent(0.86).cgColor)
+        context.setLineWidth(1.4)
+        context.strokeEllipse(in: rect.insetBy(dx: 0.7, dy: 0.7))
+        let marker = NSAttributedString(
+            string: "!",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 12, weight: .bold),
+                .foregroundColor: NSColor.white
+            ]
+        )
+        let size = marker.size()
+        marker.draw(at: CGPoint(x: rect.midX - size.width / 2.0, y: rect.midY - size.height / 2.0 + 0.5))
+        context.restoreGState()
     }
 
     private func makeReadout(
@@ -2387,6 +2529,9 @@ final class LimitRingView: NSView {
     var showsReadout: Bool = false {
         didSet { needsDisplay = true }
     }
+    var fullSnapshotFreshness: DataFreshnessState = .waiting {
+        didSet { needsDisplay = true }
+    }
 
     override var isOpaque: Bool { false }
 
@@ -2395,6 +2540,7 @@ final class LimitRingView: NSView {
             state: state,
             phase: phase,
             showsReadout: showsReadout,
+            fullSnapshotFreshness: fullSnapshotFreshness,
             accessibility: .current
         ).draw(in: bounds)
     }
@@ -2454,10 +2600,15 @@ final class LimitRingsApp: NSObject {
     private var lastFullRateLimitSyncAt: Date?
     private var lastFullRateLimitSyncUptime: TimeInterval?
     private var lastFullRateLimitSyncOrigin: RateLimitUpdateOrigin?
+    private var fullSnapshotWatchdogRequestUptime: TimeInterval?
     private var lastRateLimitValueChangeAt: Date?
     private var lastRateLimitValueChangeOrigin: RateLimitUpdateOrigin?
     private var lastRateLimitSignature: String?
     private var lastConnectionErrorCode: String?
+    private var lastConnectionFailureAt: Date?
+    private var lastConnectionFailureCode: String?
+    private var lastManualRefreshAt: Date?
+    private var lastManualRefreshPath: RateLimitRefreshPath?
     private var codexCLISourceName = "not-found"
     private var codexCLIVersion: String?
 
@@ -2566,6 +2717,10 @@ final class LimitRingsApp: NSObject {
                 guard let self else { return }
                 self.appServerConnected = connected
                 self.lastConnectionErrorCode = connected ? nil : errorCode
+                if !connected, let errorCode {
+                    self.lastConnectionFailureAt = Date()
+                    self.lastConnectionFailureCode = errorCode
+                }
                 if !connected {
                     if self.dailyUsageSnapshot == nil {
                         self.dailyUsageErrorCode = errorCode
@@ -2575,6 +2730,7 @@ final class LimitRingsApp: NSObject {
                     self.updateState()
                 }
                 self.updateConnectionHealthMenu()
+                self.updateRingFreshness()
             }
         }
         liveClient.onRateLimitState = { [weak self] state, origin in
@@ -2596,6 +2752,16 @@ final class LimitRingsApp: NSObject {
                 self.updateConnectionHealthMenu()
             }
         }
+        liveClient.onRefreshPath = { [weak self] origin, path in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if origin == .manualFullSync {
+                    self.lastManualRefreshAt = Date()
+                    self.lastManualRefreshPath = path
+                }
+                self.updateConnectionHealthMenu()
+            }
+        }
     }
 
     private func applyLimitState(_ state: LimitState, origin: RateLimitUpdateOrigin) {
@@ -2611,6 +2777,7 @@ final class LimitRingsApp: NSObject {
                 lastFullRateLimitSyncAt = state.observedAt
                 lastFullRateLimitSyncUptime = continuousUptime()
                 lastFullRateLimitSyncOrigin = origin
+                fullSnapshotWatchdogRequestUptime = nil
             case .fallback:
                 break
             }
@@ -2622,6 +2789,7 @@ final class LimitRingsApp: NSObject {
             lastRateLimitSignature = signature
         }
         ringView.state = state
+        updateRingFreshness()
         updateSummaryMenuItem()
         updateLimitDetailsMenu()
         processNotifications(for: state)
@@ -2647,14 +2815,32 @@ final class LimitRingsApp: NSObject {
     }
 
     private func evaluateFullSnapshotWatchdog(nowUptime: TimeInterval) {
+        updateRingFreshness(nowUptime: nowUptime)
         updateSummaryMenuItem()
         updateConnectionHealthMenu(nowUptime: nowUptime)
-        guard shouldRunFullSnapshotWatchdog(
+        switch fullSnapshotWatchdogAction(
             lastFullSyncUptime: lastFullRateLimitSyncUptime,
+            overdueRequestUptime: fullSnapshotWatchdogRequestUptime,
             nowUptime: nowUptime,
             isConnected: appServerConnected
-        ) else { return }
-        liveClient.requestRateLimits(origin: .scheduledFullSync)
+        ) {
+        case .none:
+            return
+        case .requestFullSnapshot:
+            fullSnapshotWatchdogRequestUptime = nowUptime
+            liveClient.requestRateLimits(origin: .scheduledFullSync)
+        case .recreateConnection:
+            fullSnapshotWatchdogRequestUptime = nowUptime
+            liveClient.recreateRateLimitConnection(origin: .scheduledFullSync)
+        }
+    }
+
+    private func updateRingFreshness(nowUptime: TimeInterval = continuousUptime()) {
+        if currentLimitSource == "app-server" {
+            ringView.fullSnapshotFreshness = currentFullSnapshotFreshness(nowUptime: nowUptime)
+        } else {
+            ringView.fullSnapshotFreshness = .current
+        }
     }
 
     private func requestDailyUsage() {
@@ -3227,6 +3413,34 @@ final class LimitRingsApp: NSObject {
                 to: menu
             )
         }
+        if let lastConnectionFailureAt,
+           let reason = connectionFailureReason(for: lastConnectionFailureCode) {
+            let time = DateFormatter.localizedString(from: lastConnectionFailureAt, dateStyle: .none, timeStyle: .short)
+            appendDisabledMenuItem(
+                String(
+                    format: localized("connection.lastFailure", fallback: "Last connection issue: %@ · %@"),
+                    time,
+                    localizedConnectionFailureReason(reason)
+                ),
+                to: menu
+            )
+        }
+        if let lastManualRefreshAt, let lastManualRefreshPath {
+            let time = DateFormatter.localizedString(from: lastManualRefreshAt, dateStyle: .none, timeStyle: .short)
+            appendDisabledMenuItem(
+                String(
+                    format: localized("connection.lastManualRefresh", fallback: "Last manual refresh: %@ · %@"),
+                    time,
+                    localizedRefreshPath(lastManualRefreshPath)
+                ),
+                to: menu
+            )
+        } else {
+            appendDisabledMenuItem(
+                localized("connection.lastManualWaiting", fallback: "Manual refresh not used yet"),
+                to: menu
+            )
+        }
     }
 
     private func appendFreshnessRow(
@@ -3304,6 +3518,15 @@ final class LimitRingsApp: NSObject {
         case .scheduledFullSync: return localized("cadence.origin.scheduled", fallback: "Scheduled")
         case .manualFullSync: return localized("cadence.origin.manual", fallback: "Manual")
         case .fallback: return localized("cadence.origin.fallback", fallback: "Fallback")
+        }
+    }
+
+    private func localizedRefreshPath(_ path: RateLimitRefreshPath) -> String {
+        switch path {
+        case .connectedFullRead:
+            return localized("refresh.connectedFullRead", fallback: "Connected full read")
+        case .freshConnection:
+            return localized("refresh.freshConnection", fallback: "Fresh app-server connection")
         }
     }
 
@@ -3510,12 +3733,10 @@ final class LimitRingsApp: NSObject {
     }
 
     @objc private func refreshNow(_ sender: NSMenuItem) {
-        if appServerConnected {
-            liveClient.requestRateLimits(origin: .manualFullSync)
-        } else {
-            updateState()
-        }
-        requestDailyUsage()
+        let snapshotIsStale = currentFullSnapshotFreshness() != .current
+        usageReadInFlight = true
+        updateDailyUsageMenu()
+        liveClient.requestManualRateLimits(snapshotIsStale: snapshotIsStale)
         updateFrame()
         updateRingVisibility()
     }

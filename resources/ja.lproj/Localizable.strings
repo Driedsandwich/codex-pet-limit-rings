@@ -14,6 +14,7 @@
 "source.cached" = "キャッシュ";
 "source.local" = "ローカル";
 "source.unknown" = "不明";
+"ring.stale" = "古いデータ";
 "details.short" = "短期枠: %@";
 "details.enforcementNotReported" = "短期枠の制限適用: Codexから報告なし";
 "details.shortNotReported" = "短期枠: Codexから報告なし";
@@ -60,6 +61,11 @@
 "connection.usageUpdated" = "使用量の最終更新: %@ · %@";
 "connection.usageWaiting" = "使用量の更新待ち";
 "connection.reason" = "理由: %@";
+"connection.lastFailure" = "最後の接続問題: %@ · %@";
+"connection.lastManualRefresh" = "最後の手動更新: %@ · %@";
+"connection.lastManualWaiting" = "手動更新はまだ実行されていません";
+"refresh.connectedFullRead" = "接続中の全体読込";
+"refresh.freshConnection" = "新しいapp-server接続";
 "cadence.origin.initial" = "初回";
 "cadence.origin.live" = "ライブ";
 "cadence.origin.scheduled" = "定期";
