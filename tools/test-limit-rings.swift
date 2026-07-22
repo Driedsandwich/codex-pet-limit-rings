@@ -28,7 +28,9 @@ struct LimitRingsTests {
             try testOptionalShortWindowDisappearsAndReturns()
             try testSparseRateLimitMergePreservesSnapshotMetadata()
             try testFullSnapshotWatchdogAndSingleInFlightGate()
+            try testManualRefreshRecoveryAndGenerationSafety()
             try testWindowRolloverRefreshesSnapshotMetadata()
+            try testResetCreditRecoverySequence()
             try testBufferedSparseUpdatesReapplyAfterFullSnapshot()
             try testRateLimitDisplaySignatureTracksVisibleValues()
             try testReconnectBackoffIsBounded()
@@ -42,6 +44,7 @@ struct LimitRingsTests {
             try testNotificationsAreOffByDefault()
             try testAccessibilityPresentationIsExplicit()
             try testAccessibilityRendererProducesImage()
+            try testEnglishJapaneseLocalizationParity()
             try testRecentAppServerSnapshotSurvivesTransientFailure()
             try testExpiredAppServerSnapshotIsDiscarded()
             try testNewestLogsDatabaseWins()
@@ -539,6 +542,77 @@ struct LimitRingsTests {
         try expect(appServerReconnectDelay(attempt: 20) == 30, "expected repeated timeout recovery to retain bounded reconnect")
     }
 
+    private static func testManualRefreshRecoveryAndGenerationSafety() throws {
+        try expect(
+            manualRateLimitRefreshPath(isProcessRunning: true, isReady: true, isSnapshotStale: false) == .connectedFullRead,
+            "expected a healthy manual refresh to reuse the live connection"
+        )
+        try expect(
+            manualRateLimitRefreshPath(isProcessRunning: false, isReady: false, isSnapshotStale: false) == .freshConnection,
+            "expected a disconnected manual refresh to create a fresh connection"
+        )
+        try expect(
+            manualRateLimitRefreshPath(isProcessRunning: true, isReady: false, isSnapshotStale: false) == .freshConnection,
+            "expected an initialization stall with a running process to create a fresh connection"
+        )
+        try expect(
+            manualRateLimitRefreshPath(isProcessRunning: true, isReady: true, isSnapshotStale: true) == .freshConnection,
+            "expected stale metadata to force a fresh manual connection"
+        )
+
+        var manualCoalescingGate = RateLimitRequestGate()
+        let scheduledToken = manualCoalescingGate.begin()
+        try expect(scheduledToken != nil, "expected the scheduled full read to enter the single in-flight gate")
+        try expect(manualCoalescingGate.begin() == nil, "expected a healthy manual refresh to coalesce with the scheduled full read")
+        try expect(
+            coalescedRateLimitRequestOrigin(current: .scheduledFullSync, incoming: .manualFullSync) == .manualFullSync,
+            "expected the coalesced response to retain the manual refresh origin"
+        )
+
+        let lastFull = 10_000.0
+        try expect(
+            fullSnapshotWatchdogAction(lastFullSyncUptime: lastFull, overdueRequestUptime: nil, nowUptime: 10_120, interval: 120, requestTimeout: 5, isConnected: true) == .requestFullSnapshot,
+            "expected the watchdog to request one full snapshot at the absolute deadline"
+        )
+        try expect(
+            fullSnapshotWatchdogAction(lastFullSyncUptime: lastFull, overdueRequestUptime: 10_120, nowUptime: 10_124.9, interval: 120, requestTimeout: 5, isConnected: true) == .none,
+            "expected the watchdog to allow the bounded request timeout"
+        )
+        try expect(
+            fullSnapshotWatchdogAction(lastFullSyncUptime: lastFull, overdueRequestUptime: 10_120, nowUptime: 10_125, interval: 120, requestTimeout: 5, isConnected: true) == .recreateConnection,
+            "expected an overdue full read to recreate the app-server connection"
+        )
+        try expect(
+            fullSnapshotWatchdogAction(lastFullSyncUptime: lastFull, overdueRequestUptime: 10_120, nowUptime: 10_130, interval: 120, requestTimeout: 5, isConnected: false) == .none,
+            "expected the disconnected client to retain bounded reconnect ownership"
+        )
+
+        try expect(
+            reconnectCallbackIsCurrent(scheduleToken: 4, currentScheduleToken: 4, generation: 9, currentGeneration: 9, stopped: false),
+            "expected the current reconnect callback to run"
+        )
+        try expect(
+            !reconnectCallbackIsCurrent(scheduleToken: 3, currentScheduleToken: 4, generation: 9, currentGeneration: 9, stopped: false),
+            "expected a callback invalidated by manual recovery to be ignored"
+        )
+        try expect(
+            !reconnectCallbackIsCurrent(scheduleToken: 4, currentScheduleToken: 4, generation: 8, currentGeneration: 9, stopped: false),
+            "expected an old connection generation callback to be ignored"
+        )
+        try expect(
+            !reconnectCallbackIsCurrent(scheduleToken: 4, currentScheduleToken: 4, generation: 9, currentGeneration: 9, stopped: true),
+            "expected stopped clients to reject reconnect callbacks"
+        )
+
+        try expect(ringPresentationIsStale(source: "app-server", freshness: .stale), "expected stale app-server data to mark the ring")
+        try expect(ringPresentationIsStale(source: "app-server", freshness: .waiting), "expected waiting app-server metadata not to look live")
+        try expect(!ringPresentationIsStale(source: "app-server", freshness: .current), "expected a current snapshot to remain live")
+        try expect(!ringPresentationIsStale(source: "local", freshness: .stale), "expected the explicit Local source not to masquerade as stale app-server data")
+        try expect(ringReadoutDetail("7d", isStale: true, staleLabel: "Stale") == "Stale · 7d", "expected a non-color stale readout label")
+        try expect(ringReadoutDetail(nil, isStale: true, staleLabel: "Stale") == "Stale", "expected a stale label without reset metadata")
+        try expect(ringReadoutDetail("7d", isStale: false, staleLabel: "Stale") == "7d", "expected current reset metadata to remain unchanged")
+    }
+
     private static func testWindowRolloverRefreshesSnapshotMetadata() throws {
         let expiredResetAt = 1_000.0
         let refreshedResetAt = 20_000.0
@@ -588,6 +662,55 @@ struct LimitRingsTests {
         try expect(fullWithBufferedSparse.rateLimits.primary?.resetsAt == refreshedResetAt, "expected the full read to replace expired rollover metadata")
         try expect(dataFreshnessState(observedAt: Date(timeIntervalSince1970: 10_000), now: Date(timeIntervalSince1970: 10_120), maxAge: 120) == .current, "expected full metadata to remain current at the deadline")
         try expect(dataFreshnessState(observedAt: Date(timeIntervalSince1970: 10_000), now: Date(timeIntervalSince1970: 10_121), maxAge: 120) == .stale, "expected overdue full metadata to be visibly stale")
+    }
+
+    private static func testResetCreditRecoverySequence() throws {
+        let exhausted = AppServerRateLimitResult(
+            rateLimits: AppServerRateLimitSnapshot(
+                limitId: "codex",
+                limitName: "Codex",
+                primary: AppServerRateLimitWindow(usedPercent: 100, windowDurationMins: 10_080, resetsAt: 20_000),
+                secondary: nil,
+                credits: nil,
+                individualLimit: nil,
+                planType: "pro",
+                rateLimitReachedType: "rate_limit_reached"
+            ),
+            rateLimitsByLimitId: nil,
+            rateLimitResetCredits: AppServerRateLimitResetCreditsSummary(availableCount: 1)
+        )
+        let reset = AppServerRateLimitResult(
+            rateLimits: AppServerRateLimitSnapshot(
+                limitId: "codex",
+                limitName: "Codex",
+                primary: AppServerRateLimitWindow(usedPercent: 0, windowDurationMins: 10_080, resetsAt: 30_000),
+                secondary: nil,
+                credits: nil,
+                individualLimit: nil,
+                planType: "pro",
+                rateLimitReachedType: nil
+            ),
+            rateLimitsByLimitId: nil,
+            rateLimitResetCredits: AppServerRateLimitResetCreditsSummary(availableCount: 0)
+        )
+        let reused = reset.mergingSparse(AppServerRateLimitSnapshot(
+            limitId: "codex",
+            limitName: nil,
+            primary: AppServerRateLimitWindow(usedPercent: 4, windowDurationMins: nil, resetsAt: nil),
+            secondary: nil,
+            credits: nil,
+            individualLimit: nil,
+            planType: nil,
+            rateLimitReachedType: nil
+        ))
+
+        try expect(exhausted.toLimitState(observedAt: Date())?.secondary?.remainingPercent == 0, "expected the exhausted weekly limit")
+        try expect(exhausted.rateLimitResetCredits?.availableCount == 1, "expected one reset credit before use")
+        try expect(reset.toLimitState(observedAt: Date())?.secondary?.remainingPercent == 100, "expected the full snapshot to expose the reset weekly limit")
+        try expect(reset.rateLimitResetCredits?.availableCount == 0, "expected reset-credit consumption to remain an observed server fact")
+        try expect(reused.toLimitState(observedAt: Date())?.secondary?.remainingPercent == 96, "expected a later sparse update to show post-reset reuse")
+        try expect(reused.rateLimits.primary?.resetsAt == 30_000, "expected post-reset sparse use to preserve the refreshed deadline")
+        try expect(reused.rateLimitResetCredits?.availableCount == 0, "expected sparse reuse not to restore a consumed reset credit")
     }
 
     private static func testBufferedSparseUpdatesReapplyAfterFullSnapshot() throws {
@@ -832,6 +955,40 @@ struct LimitRingsTests {
         ).draw(in: CGRect(x: 0, y: 0, width: 200, height: 200))
         image.unlockFocus()
         try expect(image.tiffRepresentation?.isEmpty == false, "expected accessibility renderer output")
+
+        let staleImage = NSImage(size: NSSize(width: 200, height: 200))
+        staleImage.lockFocus()
+        LimitRingRenderer(
+            state: state,
+            phase: 0.75,
+            showsReadout: true,
+            fullSnapshotFreshness: .stale,
+            accessibility: AccessibilityPresentation(reduceMotion: false, increaseContrast: true, differentiateWithoutColor: true)
+        ).draw(in: CGRect(x: 0, y: 0, width: 200, height: 200))
+        staleImage.unlockFocus()
+        try expect(staleImage.tiffRepresentation?.isEmpty == false, "expected non-color stale renderer output")
+    }
+
+    private static func testEnglishJapaneseLocalizationParity() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let english = try String(contentsOf: root.appendingPathComponent("Resources/en.lproj/Localizable.strings"), encoding: .utf8)
+        let japanese = try String(contentsOf: root.appendingPathComponent("Resources/ja.lproj/Localizable.strings"), encoding: .utf8)
+        let pattern = try NSRegularExpression(pattern: #"^\"([^\"]+)\"\s*="#, options: [.anchorsMatchLines])
+        func keys(in text: String) -> Set<String> {
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            return Set(pattern.matches(in: text, range: range).compactMap { match in
+                guard let keyRange = Range(match.range(at: 1), in: text) else { return nil }
+                return String(text[keyRange])
+            })
+        }
+        let englishKeys = keys(in: english)
+        let japaneseKeys = keys(in: japanese)
+        try expect(englishKeys == japaneseKeys, "expected English and Japanese localization key parity")
+        for key in ["ring.stale", "connection.lastFailure", "connection.lastManualRefresh", "connection.lastManualWaiting", "refresh.connectedFullRead", "refresh.freshConnection"] {
+            try expect(englishKeys.contains(key), "expected localization key \(key)")
+        }
     }
 
     private static func testRecentAppServerSnapshotSurvivesTransientFailure() throws {

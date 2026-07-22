@@ -2,6 +2,16 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
+## 1.0.9 - Unreleased
+
+### Reset Refresh Recovery
+
+- Make `Refresh Now` reuse a healthy connection and its single in-flight read, but replace a disconnected, stale, or timed-out app-server connection.
+- Invalidate old connection generations and scheduled reconnect callbacks before a manual or watchdog recovery starts.
+- Escalate an overdue 120-second full-snapshot read to a fresh app-server connection after the existing five-second timeout, while retaining bounded reconnect backoff.
+- Mark stale ring values with a non-color `!` indicator, dashed rings, and localized stale readouts instead of presenting old percentages as live.
+- Keep the last connection failure and manual refresh path in memory only, without adding account mutation, reset consumption, durable diagnostics, permissions, or thread access.
+
 ## 1.0.8 - 2026-07-18
 
 ### ChatGPT Update Recovery
