@@ -2,7 +2,7 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
-## 1.0.10 - Unreleased
+## 1.0.10 - 2026-07-28
 
 ### Runtime And Release Trust
 
@@ -11,7 +11,7 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 - Give account-usage reads a single-in-flight gate, unique request IDs, a five-second timeout, and stale-generation rejection so scheduled and manual refreshes cannot pile up.
 - Launch the packaged GUI app through LaunchServices while keeping the LaunchAgent alive, avoiding initialization loops caused by executing the inner app binary directly from launchd.
 - Stop rebuilding the Connection Health menu on every watchdog tick and defer structural updates while AppKit is tracking the menu.
-- Pin both the long-term v1.0.0 provenance baseline and latest published v1.0.9 artifact by SHA-256 in CI, with current bundle, resource, privacy, and archive checks.
+- Pin both the long-term v1.0.0 provenance baseline and published v1.0.9 compatibility baseline by SHA-256 in CI, with current bundle, resource, privacy, and archive checks.
 - Reject dangerous app output paths, fail closed on signing errors, validate localization format contracts, and document complete app, LaunchAgent, preferences, and Skill rollback.
 - Keep the product focused on the pet-attached ambient display without adding account mutation, thread access, telemetry, permissions, or durable usage storage.
 
