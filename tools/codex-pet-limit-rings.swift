@@ -99,7 +99,9 @@ let dragLiveMismatchTolerance: CGFloat = 96.0
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
 private let notificationsEnabledDefaultsKey = "CodexPetLimitRings.notificationsEnabled"
 private let notificationBandsDefaultsKey = "CodexPetLimitRings.notificationBands"
-private let appServerLimitStateTimeout: TimeInterval = 5.0
+let appServerInitializeTimeout: TimeInterval = 15.0
+let appServerRequestTimeout: TimeInterval = 5.0
+private let appServerLimitStateTimeout = appServerRequestTimeout
 
 func petDragLiveFrameIsClose(
     _ liveFrame: CGRect,
@@ -127,6 +129,7 @@ func shouldRefreshPetFrameForApplication(bundleIdentifier: String?) -> Bool {
 }
 private let codexCLIVersionTimeout: TimeInterval = 2.0
 private let limitStateFallbackMaxAge: TimeInterval = 30 * 60
+private let limitStateFutureSkewTolerance: TimeInterval = 5.0
 private let rateLimitFreshnessMaxAge: TimeInterval = 30 * 60
 private let usageFreshnessMaxAge: TimeInterval = 30 * 60
 
@@ -197,6 +200,235 @@ struct RateLimitRequestGate {
         inFlight = false
         token += 1
     }
+}
+
+enum AppServerOneShotPhase: Equatable {
+    case initializing
+    case awaitingResponse
+    case resolved
+}
+
+struct AppServerOneShotGate {
+    private(set) var phase: AppServerOneShotPhase = .initializing
+
+    mutating func receiveInitialize() -> Bool {
+        guard phase == .initializing else { return false }
+        phase = .awaitingResponse
+        return true
+    }
+
+    mutating func resolve() -> Bool {
+        guard phase != .resolved else { return false }
+        phase = .resolved
+        return true
+    }
+}
+
+struct AppServerLiveInitializationGate {
+    private(set) var pendingGeneration: Int?
+
+    mutating func begin(generation: Int) {
+        pendingGeneration = generation
+    }
+
+    mutating func complete(generation: Int) -> Bool {
+        guard pendingGeneration == generation else { return false }
+        pendingGeneration = nil
+        return true
+    }
+
+    func shouldTimeout(
+        generation: Int,
+        currentGeneration: Int,
+        processIsRunning: Bool,
+        stopped: Bool
+    ) -> Bool {
+        pendingGeneration == generation
+            && currentGeneration == generation
+            && processIsRunning
+            && !stopped
+    }
+
+    mutating func cancel() {
+        pendingGeneration = nil
+    }
+}
+
+func appServerOneShotTerminationError(phase: AppServerOneShotPhase) -> String? {
+    switch phase {
+    case .initializing:
+        return "initialize_failed"
+    case .awaitingResponse:
+        return "app_server_terminated"
+    case .resolved:
+        return nil
+    }
+}
+
+func appServerOneShotDeadlineError(
+    phase: AppServerOneShotPhase,
+    elapsedInPhase: TimeInterval,
+    responseTimeoutError: String
+) -> String? {
+    switch phase {
+    case .initializing:
+        return elapsedInPhase >= appServerInitializeTimeout ? "initialize_timeout" : nil
+    case .awaitingResponse:
+        return elapsedInPhase >= appServerRequestTimeout ? responseTimeoutError : nil
+    case .resolved:
+        return nil
+    }
+}
+
+enum UsageRequestOrigin: Equatable {
+    case initial
+    case scheduled
+    case manual
+}
+
+enum UsageRequestTransportAction: Equatable {
+    case disconnected
+    case deferUntilReady
+    case send
+}
+
+func usageRequestTransportAction(
+    isProcessRunning: Bool,
+    isReady: Bool
+) -> UsageRequestTransportAction {
+    guard isProcessRunning else { return .disconnected }
+    return isReady ? .send : .deferUntilReady
+}
+
+struct UsageRequestCompletion: Equatable {
+    var origin: UsageRequestOrigin
+    var epoch: Int
+}
+
+func coalescedUsageRequestOrigin(
+    current: UsageRequestOrigin,
+    incoming: UsageRequestOrigin
+) -> UsageRequestOrigin {
+    if current == .manual || incoming == .manual {
+        return .manual
+    }
+    if current == .initial || incoming == .initial {
+        return .initial
+    }
+    return .scheduled
+}
+
+struct UsageRequestGate {
+    private(set) var requestID: Int?
+    private(set) var generation: Int?
+    private(set) var origin: UsageRequestOrigin?
+    private(set) var epoch: Int?
+    private var nextRequestID = 2
+
+    var inFlight: Bool {
+        requestID != nil
+    }
+
+    var pending: Bool {
+        requestID == nil && origin != nil
+    }
+
+    mutating func deferUntilReady(origin: UsageRequestOrigin, generation: Int, epoch: Int) {
+        if let currentOrigin = self.origin {
+            self.origin = coalescedUsageRequestOrigin(current: currentOrigin, incoming: origin)
+            self.epoch = epoch
+            if !inFlight {
+                self.generation = generation
+            }
+            return
+        }
+        self.generation = generation
+        self.origin = origin
+        self.epoch = epoch
+    }
+
+    mutating func begin(origin: UsageRequestOrigin, generation: Int, epoch: Int) -> Int? {
+        deferUntilReady(origin: origin, generation: generation, epoch: epoch)
+        return beginPending(generation: generation)
+    }
+
+    mutating func beginPending(generation: Int) -> Int? {
+        guard !inFlight,
+              self.generation == generation,
+              origin != nil,
+              epoch != nil else {
+            return nil
+        }
+        nextRequestID += 1
+        requestID = nextRequestID
+        return nextRequestID
+    }
+
+    mutating func complete(responseID: Int, generation: Int) -> UsageRequestCompletion? {
+        guard self.requestID == responseID,
+              self.generation == generation,
+              let completedOrigin = origin,
+              let completedEpoch = epoch else {
+            return nil
+        }
+        requestID = nil
+        self.generation = nil
+        origin = nil
+        epoch = nil
+        return UsageRequestCompletion(origin: completedOrigin, epoch: completedEpoch)
+    }
+
+    func isCurrent(requestID: Int, generation: Int) -> Bool {
+        self.requestID == requestID && self.generation == generation
+    }
+
+    @discardableResult
+    mutating func cancel() -> UsageRequestCompletion? {
+        let completion: UsageRequestCompletion?
+        if let origin, let epoch {
+            completion = UsageRequestCompletion(origin: origin, epoch: epoch)
+        } else {
+            completion = nil
+        }
+        requestID = nil
+        generation = nil
+        origin = nil
+        epoch = nil
+        return completion
+    }
+}
+
+struct UsageUIRequestTracker {
+    private(set) var activeEpoch: Int?
+    private var nextEpoch = 0
+
+    var inFlight: Bool {
+        activeEpoch != nil
+    }
+
+    mutating func begin() -> Int {
+        nextEpoch += 1
+        activeEpoch = nextEpoch
+        return nextEpoch
+    }
+
+    mutating func complete(epoch: Int) -> Bool {
+        guard activeEpoch == epoch else { return false }
+        activeEpoch = nil
+        return true
+    }
+
+    mutating func cancel() {
+        activeEpoch = nil
+    }
+}
+
+func connectionHealthMenuShouldRebuild(
+    isOpen: Bool,
+    renderedRows: [String]?,
+    nextRows: [String]
+) -> Bool {
+    !isOpen && renderedRows != nextRows
 }
 
 enum FullSnapshotWatchdogAction: Equatable {
@@ -400,7 +632,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.9"
+    var version = "1.0.10"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -413,7 +645,7 @@ private struct AppServerRateLimitReadRequest: Encodable {
 }
 
 private struct AppServerAccountUsageReadRequest: Encodable {
-    var id = 2
+    var id: Int
     var method = "account/usage/read"
 }
 
@@ -805,18 +1037,35 @@ final class AppServerLimitStateReader {
         let lock = NSLock()
         let semaphore = DispatchSemaphore(value: 0)
         var buffer = ""
-        var resolved = false
-        var initialized = false
+        var gate = AppServerOneShotGate()
         var state: LimitState?
         var errorCode: String?
 
-        func resolve(_ candidate: LimitState?, error: String?) {
+        func beginRequestPhase() -> Bool {
+            lock.lock()
+            let transitioned = gate.receiveInitialize()
+            lock.unlock()
+            if transitioned {
+                semaphore.signal()
+            }
+            return transitioned
+        }
+
+        func currentPhase() -> AppServerOneShotPhase {
             lock.lock()
             defer { lock.unlock() }
-            guard !resolved else { return }
+            return gate.phase
+        }
+
+        func resolve(_ candidate: LimitState?, error: String?) {
+            lock.lock()
+            guard gate.resolve() else {
+                lock.unlock()
+                return
+            }
             state = candidate
             errorCode = error
-            resolved = true
+            lock.unlock()
             semaphore.signal()
         }
 
@@ -835,15 +1084,14 @@ final class AppServerLimitStateReader {
                 guard let responseID = Self.responseID(in: line, decoder: decoder) else {
                     continue
                 }
-                if responseID == 1, !initialized {
-                    initialized = true
+                if responseID == 1, beginRequestPhase() {
                     do {
                         try Self.write(AppServerInitializedNotification(), to: stdin.fileHandleForWriting, encoder: encoder)
                         try Self.write(AppServerRateLimitReadRequest(), to: stdin.fileHandleForWriting, encoder: encoder)
                     } catch {
                         resolve(nil, error: "request_write_failed")
                     }
-                } else if responseID == 2 {
+                } else if responseID == 2, currentPhase() == .awaitingResponse {
                     guard let decoded = Self.decodeRateLimitState(from: line, decoder: decoder) else {
                         resolve(nil, error: "invalid_rate_limit_response")
                         continue
@@ -856,18 +1104,38 @@ final class AppServerLimitStateReader {
             _ = handle.availableData
         }
         process.terminationHandler = { _ in
-            resolve(nil, error: initialized ? "app_server_terminated" : "initialize_failed")
+            guard let error = appServerOneShotTerminationError(phase: currentPhase()) else { return }
+            resolve(nil, error: error)
         }
 
         do {
             try process.run()
-            try Self.write(AppServerInitializeRequest(), to: stdin.fileHandleForWriting, encoder: encoder)
         } catch {
             return AppServerProbeResult(state: nil, cliPath: codexCLI, errorCode: "launch_failed")
         }
+        do {
+            try Self.write(AppServerInitializeRequest(), to: stdin.fileHandleForWriting, encoder: encoder)
+        } catch {
+            resolve(nil, error: "request_write_failed")
+        }
 
-        if semaphore.wait(timeout: .now() + appServerLimitStateTimeout) == .timedOut {
-            resolve(nil, error: initialized ? "rate_limit_timeout" : "initialize_timeout")
+        if semaphore.wait(timeout: .now() + appServerInitializeTimeout) == .timedOut {
+            if let error = appServerOneShotDeadlineError(
+                phase: .initializing,
+                elapsedInPhase: appServerInitializeTimeout,
+                responseTimeoutError: "rate_limit_timeout"
+            ) {
+                resolve(nil, error: error)
+            }
+        } else if currentPhase() == .awaitingResponse,
+                  semaphore.wait(timeout: .now() + appServerRequestTimeout) == .timedOut {
+            if let error = appServerOneShotDeadlineError(
+                phase: .awaitingResponse,
+                elapsedInPhase: appServerRequestTimeout,
+                responseTimeoutError: "rate_limit_timeout"
+            ) {
+                resolve(nil, error: error)
+            }
         }
         stdout.fileHandleForReading.readabilityHandler = nil
         stderr.fileHandleForReading.readabilityHandler = nil
@@ -956,18 +1224,35 @@ final class AppServerAccountUsageReader {
         let lock = NSLock()
         let semaphore = DispatchSemaphore(value: 0)
         var buffer = ""
-        var resolved = false
-        var initialized = false
+        var gate = AppServerOneShotGate()
         var snapshot: DailyUsageSnapshot?
         var errorCode: String?
 
-        func resolve(_ candidate: DailyUsageSnapshot?, error: String?) {
+        func beginRequestPhase() -> Bool {
+            lock.lock()
+            let transitioned = gate.receiveInitialize()
+            lock.unlock()
+            if transitioned {
+                semaphore.signal()
+            }
+            return transitioned
+        }
+
+        func currentPhase() -> AppServerOneShotPhase {
             lock.lock()
             defer { lock.unlock() }
-            guard !resolved else { return }
+            return gate.phase
+        }
+
+        func resolve(_ candidate: DailyUsageSnapshot?, error: String?) {
+            lock.lock()
+            guard gate.resolve() else {
+                lock.unlock()
+                return
+            }
             snapshot = candidate
             errorCode = error
-            resolved = true
+            lock.unlock()
             semaphore.signal()
         }
 
@@ -982,15 +1267,14 @@ final class AppServerAccountUsageReader {
 
             for line in lines {
                 guard let responseID = Self.responseID(in: line, decoder: decoder) else { continue }
-                if responseID == 1, !initialized {
-                    initialized = true
+                if responseID == 1, beginRequestPhase() {
                     do {
                         try Self.write(AppServerInitializedNotification(), to: stdin.fileHandleForWriting, encoder: encoder)
-                        try Self.write(AppServerAccountUsageReadRequest(), to: stdin.fileHandleForWriting, encoder: encoder)
+                        try Self.write(AppServerAccountUsageReadRequest(id: 2), to: stdin.fileHandleForWriting, encoder: encoder)
                     } catch {
                         resolve(nil, error: "request_write_failed")
                     }
-                } else if responseID == 2 {
+                } else if responseID == 2, currentPhase() == .awaitingResponse {
                     guard let decoded = Self.decodeAccountUsage(from: line, decoder: decoder) else {
                         resolve(nil, error: "invalid_account_usage_response")
                         continue
@@ -1003,18 +1287,38 @@ final class AppServerAccountUsageReader {
             _ = handle.availableData
         }
         process.terminationHandler = { _ in
-            resolve(nil, error: initialized ? "app_server_terminated" : "initialize_failed")
+            guard let error = appServerOneShotTerminationError(phase: currentPhase()) else { return }
+            resolve(nil, error: error)
         }
 
         do {
             try process.run()
-            try Self.write(AppServerInitializeRequest(), to: stdin.fileHandleForWriting, encoder: encoder)
         } catch {
             return (nil, codexCLI, "launch_failed")
         }
+        do {
+            try Self.write(AppServerInitializeRequest(), to: stdin.fileHandleForWriting, encoder: encoder)
+        } catch {
+            resolve(nil, error: "request_write_failed")
+        }
 
-        if semaphore.wait(timeout: .now() + appServerLimitStateTimeout) == .timedOut {
-            resolve(nil, error: initialized ? "account_usage_timeout" : "initialize_timeout")
+        if semaphore.wait(timeout: .now() + appServerInitializeTimeout) == .timedOut {
+            if let error = appServerOneShotDeadlineError(
+                phase: .initializing,
+                elapsedInPhase: appServerInitializeTimeout,
+                responseTimeoutError: "account_usage_timeout"
+            ) {
+                resolve(nil, error: error)
+            }
+        } else if currentPhase() == .awaitingResponse,
+                  semaphore.wait(timeout: .now() + appServerRequestTimeout) == .timedOut {
+            if let error = appServerOneShotDeadlineError(
+                phase: .awaitingResponse,
+                elapsedInPhase: appServerRequestTimeout,
+                responseTimeoutError: "account_usage_timeout"
+            ) {
+                resolve(nil, error: error)
+            }
         }
         stdout.fileHandleForReading.readabilityHandler = nil
         stderr.fileHandleForReading.readabilityHandler = nil
@@ -1092,7 +1396,7 @@ private struct AppServerRateLimitsUpdatedNotification: Decodable {
 
 final class AppServerLiveClient {
     typealias RateLimitHandler = (LimitState, RateLimitUpdateOrigin) -> Void
-    typealias UsageHandler = (DailyUsageSnapshot?, String?) -> Void
+    typealias UsageHandler = (DailyUsageSnapshot?, String?, Int) -> Void
     typealias ConnectionHandler = (Bool, String?) -> Void
     typealias CLIHandler = (String, String?) -> Void
     typealias RefreshPathHandler = (RateLimitUpdateOrigin, RateLimitRefreshPath) -> Void
@@ -1108,6 +1412,8 @@ final class AppServerLiveClient {
     private var buffer = ""
     private var rateLimitResult: AppServerRateLimitResult?
     private var rateLimitRequestGate = RateLimitRequestGate()
+    private var usageRequestGate = UsageRequestGate()
+    private var initializationGate = AppServerLiveInitializationGate()
     private var pendingRateLimitOrigin: RateLimitUpdateOrigin = .initialFullSync
     private var pendingSparseRateLimits: [AppServerRateLimitSnapshot] = []
     private var reconnectAttempt = 0
@@ -1153,7 +1459,7 @@ final class AppServerLiveClient {
         }
     }
 
-    func requestManualRateLimits(snapshotIsStale: Bool) {
+    func requestManualRateLimits(snapshotIsStale: Bool, usageEpoch: Int) {
         queue.async { [weak self] in
             guard let self, !self.stopped else { return }
             let path = manualRateLimitRefreshPath(
@@ -1165,7 +1471,7 @@ final class AppServerLiveClient {
             switch path {
             case .connectedFullRead:
                 self.sendRateLimitRequest(origin: .manualFullSync)
-                self.sendUsageRequest()
+                self.sendUsageRequest(origin: .manual, epoch: usageEpoch)
             case .freshConnection:
                 self.recreateConnection(origin: .manualFullSync)
             }
@@ -1180,9 +1486,9 @@ final class AppServerLiveClient {
         }
     }
 
-    func requestUsage() {
+    func requestUsage(epoch: Int) {
         queue.async { [weak self] in
-            self?.sendUsageRequest()
+            self?.sendUsageRequest(origin: .scheduled, epoch: epoch)
         }
     }
 
@@ -1200,6 +1506,7 @@ final class AppServerLiveClient {
 
         connectionGeneration += 1
         let generation = connectionGeneration
+        initializationGate.begin(generation: generation)
         ready = false
         buffer = ""
 
@@ -1247,8 +1554,14 @@ final class AppServerLiveClient {
             return
         }
 
-        queue.asyncAfter(deadline: .now() + appServerLimitStateTimeout) { [weak self] in
-            guard let self, generation == self.connectionGeneration, !self.ready, !self.stopped else { return }
+        queue.asyncAfter(deadline: .now() + appServerInitializeTimeout) { [weak self] in
+            guard let self,
+                  self.initializationGate.shouldTimeout(
+                    generation: generation,
+                    currentGeneration: self.connectionGeneration,
+                    processIsRunning: self.process?.isRunning == true,
+                    stopped: self.stopped
+                  ) else { return }
             self.closeCurrentProcess()
             self.reportDisconnected("initialize_timeout")
             self.scheduleReconnect()
@@ -1259,11 +1572,11 @@ final class AppServerLiveClient {
         guard generation == connectionGeneration, !stopped else { return }
         buffer += chunk
         for line in Self.drainLines(from: &buffer) {
-            handle(line: line)
+            handle(line: line, generation: generation)
         }
     }
 
-    private func handle(line: String) {
+    private func handle(line: String, generation: Int) {
         guard let data = line.data(using: .utf8) else { return }
         if let envelope = try? decoder.decode(AppServerMethodEnvelope.self, from: data),
            envelope.method == "account/rateLimits/updated",
@@ -1285,12 +1598,12 @@ final class AppServerLiveClient {
               let responseID = response.id else { return }
         switch responseID {
         case 1:
+            guard initializationGate.complete(generation: generation) else { return }
             do {
                 try write(AppServerInitializedNotification())
                 let initialOrigin = nextInitialRateLimitOrigin
                 nextInitialRateLimitOrigin = .initialFullSync
                 sendRateLimitRequest(origin: initialOrigin)
-                sendUsageRequest()
             } catch {
                 failConnection("request_write_failed")
             }
@@ -1314,10 +1627,17 @@ final class AppServerLiveClient {
             reconnectAttempt = 0
             onConnectionChanged?(true, nil)
             onRateLimitState?(state, pendingRateLimitOrigin)
-        case 3:
+            sendPendingUsageRequest()
+        default:
+            guard let completion = usageRequestGate.complete(
+                responseID: responseID,
+                generation: generation
+            ) else {
+                return
+            }
             guard let decoded = try? decoder.decode(AppServerAccountUsageReadResponse.self, from: data),
                   let result = decoded.result else {
-                onUsage?(nil, "invalid_account_usage_response")
+                onUsage?(nil, "invalid_account_usage_response", completion.epoch)
                 return
             }
             onUsage?(
@@ -1326,10 +1646,9 @@ final class AppServerLiveClient {
                     summary: result.summary,
                     observedAt: Date()
                 ),
-                nil
+                nil,
+                completion.epoch
             )
-        default:
-            break
         }
     }
 
@@ -1366,16 +1685,63 @@ final class AppServerLiveClient {
         }
     }
 
-    private func sendUsageRequest() {
-        guard process?.isRunning == true else {
-            onUsage?(nil, "app_server_disconnected")
+    private func sendUsageRequest(origin: UsageRequestOrigin, epoch: Int) {
+        let action = usageRequestTransportAction(
+            isProcessRunning: process?.isRunning == true,
+            isReady: ready
+        )
+        switch action {
+        case .disconnected:
+            onUsage?(nil, "app_server_disconnected", epoch)
+            return
+        case .deferUntilReady:
+            usageRequestGate.deferUntilReady(
+                origin: origin,
+                generation: connectionGeneration,
+                epoch: epoch
+            )
+            return
+        case .send:
+            break
+        }
+        let generation = connectionGeneration
+        guard let requestID = usageRequestGate.begin(
+            origin: origin,
+            generation: generation,
+            epoch: epoch
+        ) else {
             return
         }
+        writeUsageRequest(requestID: requestID, generation: generation, epoch: epoch)
+    }
+
+    private func sendPendingUsageRequest() {
+        let generation = connectionGeneration
+        guard ready,
+              process?.isRunning == true,
+              let epoch = usageRequestGate.epoch,
+              let requestID = usageRequestGate.beginPending(generation: generation) else {
+            return
+        }
+        writeUsageRequest(requestID: requestID, generation: generation, epoch: epoch)
+    }
+
+    private func writeUsageRequest(requestID: Int, generation: Int, epoch: Int) {
         do {
-            try write(AppServerAccountUsageReadRequest(id: 3))
+            try write(AppServerAccountUsageReadRequest(id: requestID))
         } catch {
-            onUsage?(nil, "account_usage_write_failed")
+            usageRequestGate.cancel()
+            onUsage?(nil, "account_usage_write_failed", epoch)
             failConnection("account_usage_write_failed")
+            return
+        }
+        queue.asyncAfter(deadline: .now() + appServerLimitStateTimeout) { [weak self] in
+            guard let self,
+                  self.usageRequestGate.isCurrent(requestID: requestID, generation: generation) else {
+                return
+            }
+            let completion = self.usageRequestGate.cancel()
+            self.onUsage?(nil, "account_usage_timeout", completion?.epoch ?? epoch)
         }
     }
 
@@ -1433,7 +1799,9 @@ final class AppServerLiveClient {
     }
 
     private func closeCurrentProcess() {
+        initializationGate.cancel()
         rateLimitRequestGate.cancel()
+        usageRequestGate.cancel()
         pendingSparseRateLimits.removeAll()
         rateLimitResult = nil
         stdout?.fileHandleForReading.readabilityHandler = nil
@@ -1505,14 +1873,18 @@ struct LimitRingsConfig {
 final class LimitStateReader {
     private let logsPath: URL
     private let appServerStateProvider: (() -> LimitState?)?
+    private let nowProvider: () -> Date
+    private let cacheLock = NSLock()
     private var lastAppServerState: LimitState?
 
     init(
         logsPath: URL,
         codexHome: URL? = nil,
-        appServerStateProvider: (() -> LimitState?)? = nil
+        appServerStateProvider: (() -> LimitState?)? = nil,
+        nowProvider: @escaping () -> Date = Date.init
     ) {
         self.logsPath = logsPath
+        self.nowProvider = nowProvider
         if let appServerStateProvider {
             self.appServerStateProvider = appServerStateProvider
         } else if let codexHome {
@@ -1525,26 +1897,86 @@ final class LimitStateReader {
 
     func readLatest() -> LimitState {
         if let appServerState = appServerStateProvider?() {
-            lastAppServerState = appServerState
-            return appServerState
+            let providerCompletedAt = nowProvider()
+            if let normalized = normalizedAppServerState(
+                appServerState,
+                now: providerCompletedAt
+            ) {
+                recordAppServerState(normalized, now: providerCompletedAt)
+                return normalized
+            }
         }
 
-        let logState = readLatestLog()
-        if isDisplayableLimitState(logState), isCurrentLimitState(logState, now: Date()) {
-            return logState
+        let now = nowProvider()
+        let logState = readLatestLog(now: now)
+        let localState = isDisplayableLimitState(logState) && isCurrentLimitState(logState, now: now)
+            ? logState
+            : nil
+        let cachedState: LimitState?
+        if var cached = cachedAppServerState() {
+            let observationAge = now.timeIntervalSince(cached.observedAt)
+            if observationAge >= -limitStateFutureSkewTolerance,
+               observationAge <= limitStateFallbackMaxAge {
+                if observationAge < 0 {
+                    cached.observedAt = now
+                }
+                if isCurrentLimitState(cached, now: now) {
+                    cached.source = "cached"
+                    cachedState = cached
+                } else {
+                    cachedState = nil
+                }
+            } else {
+                cachedState = nil
+            }
+        } else {
+            cachedState = nil
         }
 
-        if var cached = lastAppServerState,
-           Date().timeIntervalSince(cached.observedAt) <= limitStateFallbackMaxAge,
-           isCurrentLimitState(cached, now: Date()) {
-            cached.source = "cached"
+        switch (cachedState, localState) {
+        case let (cached?, local?):
+            return cached.observedAt >= local.observedAt ? cached : local
+        case let (cached?, nil):
             return cached
+        case let (nil, local?):
+            return local
+        case (nil, nil):
+            return .empty
         }
-
-        return .empty
     }
 
-    private func readLatestLog() -> LimitState {
+    func recordAppServerState(_ state: LimitState, now: Date? = nil) {
+        let now = now ?? nowProvider()
+        guard let state = normalizedAppServerState(state, now: now) else { return }
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if let current = lastAppServerState {
+            let currentFutureOffset = current.observedAt.timeIntervalSince(now)
+            if currentFutureOffset <= limitStateFutureSkewTolerance,
+               current.observedAt > state.observedAt {
+                return
+            }
+        }
+        lastAppServerState = state
+    }
+
+    private func cachedAppServerState() -> LimitState? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return lastAppServerState
+    }
+
+    private func normalizedAppServerState(_ state: LimitState, now: Date) -> LimitState? {
+        guard state.source == "app-server" else { return nil }
+        let futureOffset = state.observedAt.timeIntervalSince(now)
+        guard futureOffset <= limitStateFutureSkewTolerance else { return nil }
+        guard futureOffset > 0 else { return state }
+        var normalized = state
+        normalized.observedAt = now
+        return normalized
+    }
+
+    private func readLatestLog(now: Date) -> LimitState {
         guard FileManager.default.fileExists(atPath: logsPath.path) else {
             return .empty
         }
@@ -1557,9 +1989,12 @@ final class LimitStateReader {
         defer { sqlite3_close(db) }
 
         let sql = """
-        SELECT ts, feedback_log_body
+        SELECT ts, ts_nanos, feedback_log_body
         FROM logs
         WHERE feedback_log_body LIKE '%"type":"codex.rate_limits"%'
+          AND ts_nanos >= 0
+          AND ts_nanos < 1000000000
+          AND (ts < ?1 OR (ts = ?1 AND ts_nanos <= ?2))
         ORDER BY ts DESC, ts_nanos DESC, id DESC
         LIMIT 1
         """
@@ -1570,12 +2005,31 @@ final class LimitStateReader {
         }
         defer { sqlite3_finalize(statement) }
 
+        let latestAcceptedAt = now.addingTimeInterval(limitStateFutureSkewTolerance).timeIntervalSince1970
+        let latestAcceptedSeconds = Int64(floor(latestAcceptedAt))
+        let latestAcceptedNanoseconds = Int64(
+            floor((latestAcceptedAt - Double(latestAcceptedSeconds)) * 1_000_000_000)
+        )
+        sqlite3_bind_int64(statement, 1, latestAcceptedSeconds)
+        sqlite3_bind_int64(statement, 2, latestAcceptedNanoseconds)
+
         guard sqlite3_step(statement) == SQLITE_ROW,
-              let cText = sqlite3_column_text(statement, 1) else {
+              let cText = sqlite3_column_text(statement, 2) else {
             return .empty
         }
 
-        let observedAt = Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(statement, 0)))
+        let observedSeconds = sqlite3_column_int64(statement, 0)
+        let observedNanoseconds = sqlite3_column_int64(statement, 1)
+        guard observedNanoseconds >= 0, observedNanoseconds < 1_000_000_000 else {
+            return .empty
+        }
+        var observedAt = Date(
+            timeIntervalSince1970: TimeInterval(observedSeconds)
+                + TimeInterval(observedNanoseconds) / 1_000_000_000
+        )
+        if observedAt > now {
+            observedAt = now
+        }
         let body = String(cString: cText)
         guard let json = extractRateLimitJSON(from: body),
               let data = json.data(using: .utf8),
@@ -1608,7 +2062,7 @@ final class LimitStateReader {
             observedAt: observedAt,
             source: "local"
         )
-        return isCurrentLimitState(state, now: Date()) ? state : .empty
+        return isCurrentLimitState(state, now: now) ? state : .empty
     }
 
     private func isDisplayableLimitState(_ state: LimitState) -> Bool {
@@ -1616,12 +2070,14 @@ final class LimitStateReader {
     }
 
     private func isCurrentLimitState(_ state: LimitState, now: Date) -> Bool {
-        [state.primary, state.secondary].compactMap { $0 }.contains {
+        let observationAge = now.timeIntervalSince(state.observedAt)
+        guard observationAge >= 0 else { return false }
+        return [state.primary, state.secondary].compactMap { $0 }.contains {
             if let resetAt = $0.resetAt {
                 return resetAt > now.timeIntervalSince1970
             }
             let maxAge = max(($0.windowMinutes ?? 0) * 60, limitStateFallbackMaxAge)
-            return now.timeIntervalSince(state.observedAt) <= maxAge
+            return observationAge <= maxAge
         }
     }
 
@@ -2548,7 +3004,7 @@ final class LimitRingView: NSView {
     }
 }
 
-final class LimitRingsApp: NSObject {
+final class LimitRingsApp: NSObject, NSMenuDelegate {
     private let config: LimitRingsConfig
     private let stateReader: LimitStateReader
     private let liveClient: AppServerLiveClient
@@ -2563,6 +3019,9 @@ final class LimitRingsApp: NSObject {
     private var limitDetailsMenu: NSMenu?
     private var dailyUsageMenu: NSMenu?
     private var connectionHealthMenu: NSMenu?
+    private var connectionHealthMenuIsOpen = false
+    private var connectionHealthMenuNeedsUpdate = false
+    private var renderedConnectionHealthRows: [String]?
     private var showRingsItem: NSMenuItem?
     private var notificationsItem: NSMenuItem?
     private var stateTimer: Timer?
@@ -2592,7 +3051,10 @@ final class LimitRingsApp: NSObject {
     private var notificationsEnabled: Bool
     private var notificationBands: [String: Int]
     private var stateReadInFlight = false
-    private var usageReadInFlight = false
+    private var usageRequestTracker = UsageUIRequestTracker()
+    private var usageReadInFlight: Bool {
+        usageRequestTracker.inFlight
+    }
     private var appServerConnected = false
     private var currentLimitSource = "none"
     private var dailyUsageSnapshot: DailyUsageSnapshot?
@@ -2666,7 +3128,6 @@ final class LimitRingsApp: NSObject {
     func run() {
         installStatusMenu()
         updateState()
-        usageReadInFlight = true
         updateDailyUsageMenu()
         liveClient.start()
         startFullSnapshotWatchdog()
@@ -2717,6 +3178,7 @@ final class LimitRingsApp: NSObject {
         liveClient.onConnectionChanged = { [weak self] connected, errorCode in
             DispatchQueue.main.async {
                 guard let self else { return }
+                let becameConnected = connected && !self.appServerConnected
                 self.appServerConnected = connected
                 self.lastConnectionErrorCode = connected ? nil : errorCode
                 if !connected, let errorCode {
@@ -2726,10 +3188,12 @@ final class LimitRingsApp: NSObject {
                 if !connected {
                     if self.dailyUsageSnapshot == nil {
                         self.dailyUsageErrorCode = errorCode
-                        self.usageReadInFlight = false
-                        self.updateDailyUsageMenu()
                     }
+                    self.usageRequestTracker.cancel()
+                    self.updateDailyUsageMenu()
                     self.updateState()
+                } else if becameConnected {
+                    self.requestDailyUsage()
                 }
                 self.updateConnectionHealthMenu()
                 self.updateRingFreshness()
@@ -2740,16 +3204,16 @@ final class LimitRingsApp: NSObject {
                 self?.applyLimitState(state, origin: origin)
             }
         }
-        liveClient.onUsage = { [weak self] snapshot, errorCode in
+        liveClient.onUsage = { [weak self] snapshot, errorCode, epoch in
             DispatchQueue.main.async {
                 guard let self else { return }
+                guard self.usageRequestTracker.complete(epoch: epoch) else { return }
                 if let snapshot {
                     self.dailyUsageSnapshot = snapshot
                     self.dailyUsageErrorCode = nil
                 } else if self.dailyUsageSnapshot == nil {
                     self.dailyUsageErrorCode = errorCode
                 }
-                self.usageReadInFlight = false
                 self.updateDailyUsageMenu()
                 self.updateConnectionHealthMenu()
             }
@@ -2768,6 +3232,7 @@ final class LimitRingsApp: NSObject {
 
     private func applyLimitState(_ state: LimitState, origin: RateLimitUpdateOrigin) {
         currentLimitSource = state.source
+        stateReader.recordAppServerState(state)
         if state.source != "none" {
             lastRateLimitObservedAt = state.observedAt
         }
@@ -2846,9 +3311,9 @@ final class LimitRingsApp: NSObject {
     }
 
     private func requestDailyUsage() {
-        usageReadInFlight = true
+        let epoch = usageRequestTracker.begin()
         updateDailyUsageMenu()
-        liveClient.requestUsage()
+        liveClient.requestUsage(epoch: epoch)
     }
 
     private func installGlobalStateWatcher() {
@@ -3069,6 +3534,7 @@ final class LimitRingsApp: NSObject {
             keyEquivalent: ""
         )
         let connectionMenu = NSMenu(title: localized("menu.connectionHealth", fallback: "Connection Health"))
+        connectionMenu.delegate = self
         connectionItem.submenu = connectionMenu
         menu.addItem(connectionItem)
         connectionHealthMenu = connectionMenu
@@ -3315,7 +3781,72 @@ final class LimitRingsApp: NSObject {
 
     private func updateConnectionHealthMenu(nowUptime: TimeInterval = continuousUptime()) {
         guard let menu = connectionHealthMenu else { return }
+        let rows = connectionHealthMenuRows(nowUptime: nowUptime)
+        guard connectionHealthMenuShouldRebuild(
+            isOpen: connectionHealthMenuIsOpen,
+            renderedRows: renderedConnectionHealthRows,
+            nextRows: rows
+        ) else {
+            connectionHealthMenuNeedsUpdate = connectionHealthMenuIsOpen
+                && renderedConnectionHealthRows != rows
+            return
+        }
+
+        renderConnectionHealthMenu(rows, in: menu)
+    }
+
+    private func renderConnectionHealthMenu(_ rows: [String], in menu: NSMenu) {
         menu.removeAllItems()
+        for row in rows {
+            appendDisabledMenuItem(row, to: menu)
+        }
+        renderedConnectionHealthRows = rows
+        connectionHealthMenuNeedsUpdate = false
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === connectionHealthMenu else { return }
+        let rows = connectionHealthMenuRows(nowUptime: continuousUptime())
+        guard renderedConnectionHealthRows != rows else {
+            connectionHealthMenuNeedsUpdate = false
+            return
+        }
+        renderConnectionHealthMenu(rows, in: menu)
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === connectionHealthMenu else { return }
+        connectionHealthMenuIsOpen = true
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        guard menu === connectionHealthMenu else { return }
+        connectionHealthMenuIsOpen = false
+        guard connectionHealthMenuNeedsUpdate else { return }
+        DispatchQueue.main.async { [weak self, weak menu] in
+            guard let self,
+                  let menu,
+                  menu === self.connectionHealthMenu,
+                  !self.connectionHealthMenuIsOpen,
+                  self.connectionHealthMenuNeedsUpdate else {
+                return
+            }
+            self.updateConnectionHealthMenu()
+        }
+    }
+
+#if LIMIT_RINGS_TESTING
+    func installConnectionHealthMenuForTesting(_ menu: NSMenu) {
+        connectionHealthMenu = menu
+        menu.delegate = self
+        renderedConnectionHealthRows = nil
+        connectionHealthMenuNeedsUpdate = true
+        connectionHealthMenuIsOpen = false
+    }
+#endif
+
+    private func connectionHealthMenuRows(nowUptime: TimeInterval) -> [String] {
+        var rows: [String] = []
         let fullSnapshotFreshness = currentFullSnapshotFreshness(nowUptime: nowUptime)
 
         let statusTitle: String
@@ -3333,7 +3864,7 @@ final class LimitRingsApp: NSObject {
         case .pollFallback:
             statusTitle = localized("connection.pollFallback", fallback: "↙ Poll fallback while reconnecting")
         }
-        appendDisabledMenuItem(statusTitle, to: menu)
+        rows.append(statusTitle)
 
         let sourceLabel: String
         switch currentLimitSource {
@@ -3347,16 +3878,10 @@ final class LimitRingsApp: NSObject {
         case "local": sourceLabel = localized("connection.sourceLocal", fallback: "Local")
         default: sourceLabel = localized("connection.sourceWaiting", fallback: "Waiting")
         }
-        appendDisabledMenuItem(
-            String(format: localized("connection.source", fallback: "Rate-limit source: %@"), sourceLabel),
-            to: menu
-        )
+        rows.append(String(format: localized("connection.source", fallback: "Rate-limit source: %@"), sourceLabel))
 
         let cliIdentity = codexCLIVersion ?? codexCLISourceName
-        appendDisabledMenuItem(
-            String(format: localized("connection.codexCLI", fallback: "Codex CLI: %@"), cliIdentity),
-            to: menu
-        )
+        rows.append(String(format: localized("connection.codexCLI", fallback: "Codex CLI: %@"), cliIdentity))
 
         appendFreshnessRow(
             observedAt: lastRateLimitObservedAt,
@@ -3365,7 +3890,7 @@ final class LimitRingsApp: NSObject {
             updatedFallback: "Rate limits updated: %@ · %@",
             waitingKey: "connection.rateLimitsWaiting",
             waitingFallback: "Rate-limit update pending",
-            to: menu
+            to: &rows
         )
         appendCadenceRow(
             observedAt: lastLiveRateLimitUpdateAt,
@@ -3374,7 +3899,7 @@ final class LimitRingsApp: NSObject {
             waitingKey: "connection.lastLiveWaiting",
             waitingFallback: "Live update not observed yet",
             origin: nil,
-            to: menu
+            to: &rows
         )
         appendFreshnessCadenceRow(
             observedAt: lastFullRateLimitSyncAt,
@@ -3385,7 +3910,7 @@ final class LimitRingsApp: NSObject {
             waitingFallback: "Full sync pending",
             origin: lastFullRateLimitSyncOrigin,
             freshnessOverride: fullSnapshotFreshness,
-            to: menu
+            to: &rows
         )
         appendCadenceRow(
             observedAt: lastRateLimitValueChangeAt,
@@ -3394,7 +3919,7 @@ final class LimitRingsApp: NSObject {
             waitingKey: "connection.lastValueWaiting",
             waitingFallback: "Value change not observed yet",
             origin: lastRateLimitValueChangeOrigin,
-            to: menu
+            to: &rows
         )
         appendFreshnessRow(
             observedAt: dailyUsageSnapshot?.observedAt,
@@ -3403,46 +3928,41 @@ final class LimitRingsApp: NSObject {
             updatedFallback: "Usage updated: %@ · %@",
             waitingKey: "connection.usageWaiting",
             waitingFallback: "Usage update pending",
-            to: menu
+            to: &rows
         )
 
         if let reason = connectionFailureReason(for: lastConnectionErrorCode) {
-            appendDisabledMenuItem(
+            rows.append(
                 String(
                     format: localized("connection.reason", fallback: "Reason: %@"),
                     localizedConnectionFailureReason(reason)
-                ),
-                to: menu
+                )
             )
         }
         if let lastConnectionFailureAt,
            let reason = connectionFailureReason(for: lastConnectionFailureCode) {
             let time = DateFormatter.localizedString(from: lastConnectionFailureAt, dateStyle: .none, timeStyle: .short)
-            appendDisabledMenuItem(
+            rows.append(
                 String(
                     format: localized("connection.lastFailure", fallback: "Last connection issue: %@ · %@"),
                     time,
                     localizedConnectionFailureReason(reason)
-                ),
-                to: menu
+                )
             )
         }
         if let lastManualRefreshAt, let lastManualRefreshPath {
             let time = DateFormatter.localizedString(from: lastManualRefreshAt, dateStyle: .none, timeStyle: .short)
-            appendDisabledMenuItem(
+            rows.append(
                 String(
                     format: localized("connection.lastManualRefresh", fallback: "Last manual refresh: %@ · %@"),
                     time,
                     localizedRefreshPath(lastManualRefreshPath)
-                ),
-                to: menu
+                )
             )
         } else {
-            appendDisabledMenuItem(
-                localized("connection.lastManualWaiting", fallback: "Manual refresh not used yet"),
-                to: menu
-            )
+            rows.append(localized("connection.lastManualWaiting", fallback: "Manual refresh not used yet"))
         }
+        return rows
     }
 
     private func appendFreshnessRow(
@@ -3452,17 +3972,16 @@ final class LimitRingsApp: NSObject {
         updatedFallback: String,
         waitingKey: String,
         waitingFallback: String,
-        to menu: NSMenu
+        to rows: inout [String]
     ) {
         guard let observedAt else {
-            appendDisabledMenuItem(localized(waitingKey, fallback: waitingFallback), to: menu)
+            rows.append(localized(waitingKey, fallback: waitingFallback))
             return
         }
         let time = DateFormatter.localizedString(from: observedAt, dateStyle: .none, timeStyle: .short)
         let freshness = dataFreshnessState(observedAt: observedAt, maxAge: maxAge)
-        appendDisabledMenuItem(
-            String(format: localized(updatedKey, fallback: updatedFallback), time, localizedFreshness(freshness)),
-            to: menu
+        rows.append(
+            String(format: localized(updatedKey, fallback: updatedFallback), time, localizedFreshness(freshness))
         )
     }
 
@@ -3475,17 +3994,17 @@ final class LimitRingsApp: NSObject {
     private func appendCadenceRow(
         observedAt: Date?, key: String, fallback: String,
         waitingKey: String, waitingFallback: String,
-        origin: RateLimitUpdateOrigin?, to menu: NSMenu
+        origin: RateLimitUpdateOrigin?, to rows: inout [String]
     ) {
         guard let observedAt else {
-            appendDisabledMenuItem(localized(waitingKey, fallback: waitingFallback), to: menu)
+            rows.append(localized(waitingKey, fallback: waitingFallback))
             return
         }
         let time = DateFormatter.localizedString(from: observedAt, dateStyle: .none, timeStyle: .short)
         if let origin {
-            appendDisabledMenuItem(String(format: localized(key, fallback: fallback), time, localizedRateLimitOrigin(origin)), to: menu)
+            rows.append(String(format: localized(key, fallback: fallback), time, localizedRateLimitOrigin(origin)))
         } else {
-            appendDisabledMenuItem(String(format: localized(key, fallback: fallback), time), to: menu)
+            rows.append(String(format: localized(key, fallback: fallback), time))
         }
     }
 
@@ -3494,22 +4013,21 @@ final class LimitRingsApp: NSObject {
         waitingKey: String, waitingFallback: String,
         origin: RateLimitUpdateOrigin?,
         freshnessOverride: DataFreshnessState? = nil,
-        to menu: NSMenu
+        to rows: inout [String]
     ) {
         guard let observedAt, let origin else {
-            appendDisabledMenuItem(localized(waitingKey, fallback: waitingFallback), to: menu)
+            rows.append(localized(waitingKey, fallback: waitingFallback))
             return
         }
         let time = DateFormatter.localizedString(from: observedAt, dateStyle: .none, timeStyle: .short)
         let freshness = freshnessOverride ?? dataFreshnessState(observedAt: observedAt, maxAge: maxAge)
-        appendDisabledMenuItem(
+        rows.append(
             String(
                 format: localized(key, fallback: fallback),
                 time,
                 localizedRateLimitOrigin(origin),
                 localizedFreshness(freshness)
-            ),
-            to: menu
+            )
         )
     }
 
@@ -3736,9 +4254,12 @@ final class LimitRingsApp: NSObject {
 
     @objc private func refreshNow(_ sender: NSMenuItem) {
         let snapshotIsStale = currentFullSnapshotFreshness() != .current
-        usageReadInFlight = true
+        let usageEpoch = usageRequestTracker.begin()
         updateDailyUsageMenu()
-        liveClient.requestManualRateLimits(snapshotIsStale: snapshotIsStale)
+        liveClient.requestManualRateLimits(
+            snapshotIsStale: snapshotIsStale,
+            usageEpoch: usageEpoch
+        )
         updateFrame()
         updateRingVisibility()
     }
