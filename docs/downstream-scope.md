@@ -136,6 +136,7 @@ The first downstream parent commit changes live pet-window matching from the vis
 
 - Preserve the newest valid memory-only app-server snapshot across transient failures and compare it with the read-only SQLite fallback by observation time.
 - Separate the 15-second app-server initialization deadline from the five-second read deadline so current CLI startup latency does not trigger a false reconnect loop.
+- Start the packaged GUI app through LaunchServices while keeping the LaunchAgent waiting, rather than executing the inner binary directly from launchd.
 - Coalesce account-usage reads behind a unique, generation-bound, five-second single-in-flight request.
 - Avoid structural Connection Health menu updates while AppKit is tracking the menu.
 - Pin public artifact digests, tighten archive and privacy checks, reject dangerous recursive-removal paths, and make signing and rollback fail closed.

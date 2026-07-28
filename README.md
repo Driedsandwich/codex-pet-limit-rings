@@ -180,6 +180,11 @@ Clone this repository, then install the rings and LaunchAgent from source:
 tools/install-limit-rings.sh
 ```
 
+The LaunchAgent waits on `/usr/bin/open -W` so LaunchServices owns the GUI-app
+lifecycle. It does not execute the inner app binary directly from launchd,
+which can prevent the long-lived app-server response handler from receiving
+initialization output on current macOS and ChatGPT builds.
+
 You should see a small rings icon in the macOS menu bar. Use that menu to inspect limit details, toggle rings, opt in to local notifications, refresh data, or quit. Notifications remain off until you enable them.
 
 Then use any Codex pet normally. No pet setup step is required.

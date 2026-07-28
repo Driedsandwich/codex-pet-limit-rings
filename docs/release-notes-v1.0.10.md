@@ -6,6 +6,7 @@ Version 1.0.10 is a reliability-focused maintenance candidate. It strengthens re
 
 - Seed the in-memory fallback from successful live app-server snapshots and choose the newest valid cached or local fallback after a transient disconnect.
 - Allow up to 15 seconds for app-server initialization while retaining the five-second rate-limit and usage read deadlines.
+- Start the installed GUI app through LaunchServices while the LaunchAgent waits, preventing the repeated initialization timeout observed when launchd directly executes the inner app binary.
 - Coalesce scheduled and manual account-usage reads behind one request, assign unique request IDs, reject older connection generations, and stop waiting after five seconds.
 - Rebuild Connection Health only when its rows change and never mutate its structure while AppKit is tracking the menu.
 

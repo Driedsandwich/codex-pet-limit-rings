@@ -194,6 +194,33 @@ assert_file_sha256() {
   fi
 }
 
+assert_launch_agent_contract() {
+  local agent="$1"
+  local app="$2"
+
+  if [[ ! -f "$agent" || -L "$agent" ]]; then
+    release_safety_fail "LaunchAgent must be a regular plist: $agent"
+    return 1
+  fi
+  if ! plutil -lint "$agent" >/dev/null; then
+    release_safety_fail "LaunchAgent plist is invalid: $agent"
+    return 1
+  fi
+  if [[ "$(plutil -extract Label raw "$agent")" != "com.codex-pet.limit-rings" ||
+        "$(plutil -extract ProgramArguments.0 raw "$agent")" != "/usr/bin/open" ||
+        "$(plutil -extract ProgramArguments.1 raw "$agent")" != "-W" ||
+        "$(plutil -extract ProgramArguments.2 raw "$agent")" != "$app" ||
+        "$(plutil -extract RunAtLoad raw "$agent")" != "true" ||
+        "$(plutil -extract LimitLoadToSessionType raw "$agent")" != "Aqua" ]]; then
+    release_safety_fail "LaunchAgent does not match the LaunchServices startup contract"
+    return 1
+  fi
+  if plutil -extract ProgramArguments.3 raw "$agent" >/dev/null 2>&1; then
+    release_safety_fail "LaunchAgent has unexpected program arguments"
+    return 1
+  fi
+}
+
 localization_keys() {
   sed -n 's/^[[:space:]]*"\([^"]*\)"[[:space:]]*=.*/\1/p' "$1"
 }

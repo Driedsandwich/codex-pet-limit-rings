@@ -9,6 +9,7 @@ This repository packages `codex-pet-limit-rings`: a native macOS companion app t
 - Keep the Codex app bundle unmodified.
 - Treat `tools/codex-pet-limit-rings.swift` as the app source.
 - Treat `tools/install-limit-rings.sh` and `tools/uninstall-limit-rings.sh` as the public install/uninstall path.
+- Keep packaged startup LaunchServices-owned: the LaunchAgent waits on `/usr/bin/open -W` instead of executing the inner GUI binary directly.
 - Treat `skills/codex-pet-limit-rings/SKILL.md` as the reusable Codex-agent workflow.
 - Keep weather-pet code under `experiments/weather-pets/`; it is not the main package.
 

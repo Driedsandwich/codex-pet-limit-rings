@@ -54,7 +54,9 @@ cat > "$AGENT" <<PLIST
   <string>com.codex-pet.limit-rings</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$BIN</string>
+    <string>/usr/bin/open</string>
+    <string>-W</string>
+    <string>$APP</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -67,6 +69,7 @@ cat > "$AGENT" <<PLIST
 </dict>
 </plist>
 PLIST
+assert_launch_agent_contract "$AGENT" "$APP"
 
 launchctl bootstrap "$GUI_TARGET" "$AGENT"
 launchctl kickstart -k "$GUI_TARGET/com.codex-pet.limit-rings"

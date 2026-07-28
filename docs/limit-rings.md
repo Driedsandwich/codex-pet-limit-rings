@@ -78,7 +78,12 @@ and installs:
 ~/Library/LaunchAgents/com.codex-pet.limit-rings.plist
 ```
 
-The LaunchAgent starts the app at login. The installer also removes the earlier prototype app and LaunchAgent names if present:
+The LaunchAgent starts the app at login through `/usr/bin/open -W`, leaving
+LaunchServices to own the GUI-app lifecycle while the LaunchAgent waits for the
+app to exit. It deliberately does not execute the inner app binary directly
+from launchd because that path can leave the long-lived app-server response
+handler in an initialization loop. The installer also removes the earlier
+prototype app and LaunchAgent names if present:
 
 ```text
 ~/Applications/CodexLimitAura.app

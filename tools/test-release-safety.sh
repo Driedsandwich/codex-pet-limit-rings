@@ -52,6 +52,34 @@ assert_file_sha256 "$checksum_fixture" "$checksum" "fixture"
 expect_rejected assert_file_sha256 "$checksum_fixture" "$(printf '0%.0s' {1..64})" "fixture"
 expect_rejected assert_file_sha256 "$checksum_fixture" "invalid" "fixture"
 
+launch_agent_app="$ALLOWED_ROOT/CodexPetLimitRings.app"
+launch_agent_fixture="$FIXTURE_ROOT/com.codex-pet.limit-rings.plist"
+mkdir -p "$launch_agent_app"
+plutil -create xml1 "$launch_agent_fixture"
+plutil -insert Label -string com.codex-pet.limit-rings "$launch_agent_fixture"
+plutil -insert ProgramArguments \
+  -json "[\"/usr/bin/open\",\"-W\",\"$launch_agent_app\"]" \
+  "$launch_agent_fixture"
+plutil -insert RunAtLoad -bool true "$launch_agent_fixture"
+plutil -insert LimitLoadToSessionType -string Aqua "$launch_agent_fixture"
+assert_launch_agent_contract "$launch_agent_fixture" "$launch_agent_app"
+
+direct_binary_agent="$FIXTURE_ROOT/direct-binary-agent.plist"
+cp "$launch_agent_fixture" "$direct_binary_agent"
+plutil -replace ProgramArguments.0 \
+  -string "$launch_agent_app/Contents/MacOS/CodexPetLimitRings" \
+  "$direct_binary_agent"
+expect_rejected assert_launch_agent_contract "$direct_binary_agent" "$launch_agent_app"
+
+extra_argument_agent="$FIXTURE_ROOT/extra-argument-agent.plist"
+cp "$launch_agent_fixture" "$extra_argument_agent"
+plutil -insert ProgramArguments.3 -string unexpected "$extra_argument_agent"
+expect_rejected assert_launch_agent_contract "$extra_argument_agent" "$launch_agent_app"
+
+linked_agent="$FIXTURE_ROOT/linked-agent.plist"
+ln -s "$launch_agent_fixture" "$linked_agent"
+expect_rejected assert_launch_agent_contract "$linked_agent" "$launch_agent_app"
+
 assert_release_version 1.0.10
 expect_rejected assert_release_version ""
 expect_rejected assert_release_version 1.0

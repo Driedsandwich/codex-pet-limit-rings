@@ -15,6 +15,7 @@ Start a compatibility update when one of these conditions is observed:
 
 - A ChatGPT desktop, Codex CLI, or app-server change breaks a tested method, schema fixture, pet-window match, lifecycle recovery, or diagnostic.
 - Full snapshots remain stale, manual refresh cannot recover, or the watchdog repeatedly replaces the connection.
+- The LaunchAgent is running but the LaunchServices-owned app or its long-lived app-server child repeatedly exits or remains in initialization.
 - The macOS 15 or macOS 26 CI job, packaging, artifact smoke, privacy, localization, accessibility, or path-sanitization check regresses.
 - Published release facts, checksums, minimum-system requirements, or rollback instructions no longer match the public artifact.
 
