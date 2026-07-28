@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/tools/release-safety.sh"
+
 APP="${CODEX_PET_LIMIT_RINGS_APP:-$HOME/Applications/CodexPetLimitRings.app}"
 BIN="$APP/Contents/MacOS/CodexPetLimitRings"
 AGENT_DIR="$HOME/Library/LaunchAgents"
@@ -11,6 +13,9 @@ OLD_BIN="$OLD_APP/Contents/MacOS/CodexLimitAura"
 OLD_AGENT="$AGENT_DIR/com.codex-pet.limit-aura.plist"
 GUI_TARGET="gui/$(id -u)"
 BACKUP_ROOT="$HOME/Library/Application Support/CodexPetLimitRings/Backups"
+
+assert_safe_app_path "$APP" "CodexPetLimitRings.app" "$HOME/Applications"
+assert_safe_app_path "$OLD_APP" "CodexLimitAura.app" "$HOME/Applications"
 
 if [[ -d "$APP" || -f "$AGENT" ]]; then
   backup="$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S)"
@@ -34,9 +39,10 @@ pkill -TERM -f "$OLD_BIN" >/dev/null 2>&1 || true
 pkill -TERM -f "CodexPetLimitRings.app/Contents/MacOS/CodexPetLimitRings" >/dev/null 2>&1 || true
 pkill -TERM -f "CodexLimitAura.app/Contents/MacOS/CodexLimitAura" >/dev/null 2>&1 || true
 rm -f "$OLD_AGENT"
-rm -rf "$OLD_APP"
+safe_remove_app_bundle "$OLD_APP" "CodexLimitAura.app" "$HOME/Applications"
 
 "$ROOT/tools/build-limit-rings.sh" "$APP" >/dev/null
+codesign --verify --deep --strict "$APP"
 
 cat > "$AGENT" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

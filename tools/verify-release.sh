@@ -2,32 +2,33 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_BIN="$ROOT/tmp/codex-pet-limit-rings-release-check"
-PREVIEW="$ROOT/tmp/codex-pet-limit-rings-release-check.png"
-PATH_SCAN_APP="$ROOT/tmp/codex-pet-limit-rings-path-scan.app"
-PATH_SCAN_ZIP="$ROOT/tmp/codex-pet-limit-rings-path-scan.zip"
-PATH_SCAN_EXTRACT="$ROOT/tmp/codex-pet-limit-rings-path-scan-extracted"
-PATH_SCAN_FIXTURE="$ROOT/tmp/codex-pet-limit-rings-path-scan-fixture"
+source "$ROOT/tools/release-safety.sh"
+
 PLIST="$ROOT/tools/CodexPetLimitRings-Info.plist"
+VERSION="$(plutil -extract CFBundleShortVersionString raw "$PLIST")"
+assert_release_version "$VERSION"
+VERIFY_ROOT="$ROOT/tmp/verify-release-v$VERSION"
+APP_BIN="$VERIFY_ROOT/codex-pet-limit-rings-release-check"
+PREVIEW="$VERIFY_ROOT/codex-pet-limit-rings-release-check.png"
+PATH_SCAN_STAGE="$VERIFY_ROOT/package"
+PATH_SCAN_APP="$PATH_SCAN_STAGE/CodexPetLimitRings.app"
+PATH_SCAN_ZIP="$VERIFY_ROOT/CodexPetLimitRings-v$VERSION-macos-arm64.zip"
+PATH_SCAN_CHECKSUM="$PATH_SCAN_ZIP.sha256"
+PATH_SCAN_FIXTURE="$VERIFY_ROOT/codex-pet-limit-rings-path-scan-fixture"
 DEPLOYMENT_TARGET="$(plutil -extract LSMinimumSystemVersion raw "$PLIST")"
 
-contains_local_absolute_path() {
-  strings "$1" | grep -E '/Users/[^/[:space:]]+|/home/[^/[:space:]]+|/(private/)?var/folders/'
-}
-
-assert_no_local_absolute_paths() {
-  local binary="$1"
-  if [[ ! -f "$binary" ]]; then
-    echo "release verification failed: path-scan binary is missing: $binary" >&2
-    exit 1
-  fi
-  if contains_local_absolute_path "$binary"; then
-    echo "release verification failed: local absolute path found in $(basename "$binary")" >&2
-    exit 1
-  fi
-}
-
 mkdir -p "$ROOT/tmp"
+assert_safe_release_root "$ROOT/tmp"
+assert_safe_release_path "$VERIFY_ROOT" "$ROOT/tmp" "verify-release-v$VERSION"
+safe_remove_release_path "$VERIFY_ROOT" "$ROOT/tmp" "verify-release-v$VERSION"
+mkdir -p "$VERIFY_ROOT"
+cleanup() {
+  if [[ -d "$VERIFY_ROOT" && ! -L "$VERIFY_ROOT" ]]; then
+    safe_remove_release_path "$VERIFY_ROOT" "$ROOT/tmp" "verify-release-v$VERSION"
+  fi
+}
+trap cleanup EXIT
+
 printf '/Users/example/repository/source.swift\n' > "$PATH_SCAN_FIXTURE"
 if ! contains_local_absolute_path "$PATH_SCAN_FIXTURE" >/dev/null; then
   echo "release verification failed: local absolute path detector rejected its fixture" >&2
@@ -38,9 +39,11 @@ bash -n "$ROOT"/tools/*.sh
 plutil -lint "$PLIST" >/dev/null
 plutil -lint "$ROOT/resources/en.lproj/Localizable.strings" >/dev/null
 plutil -lint "$ROOT/resources/ja.lproj/Localizable.strings" >/dev/null
-diff \
-  <(sed -n 's/^\("[^"]*"\).*/\1/p' "$ROOT/resources/en.lproj/Localizable.strings" | sort) \
-  <(sed -n 's/^\("[^"]*"\).*/\1/p' "$ROOT/resources/ja.lproj/Localizable.strings" | sort)
+"$ROOT/tools/test-release-safety.sh"
+verify_localization_contract \
+  "$ROOT/resources/en.lproj/Localizable.strings" \
+  "$ROOT/resources/ja.lproj/Localizable.strings" \
+  "$ROOT/tmp"
 "$ROOT/tools/test-limit-rings.sh"
 
 (
@@ -58,17 +61,18 @@ diff \
 
 assert_no_local_absolute_paths "$APP_BIN"
 
-rm -rf "$PATH_SCAN_APP" "$PATH_SCAN_ZIP" "$PATH_SCAN_EXTRACT"
 "$ROOT/tools/build-limit-rings.sh" "$PATH_SCAN_APP" >/dev/null
+codesign --verify --deep --strict "$PATH_SCAN_APP"
 ditto -c -k --norsrc --keepParent "$PATH_SCAN_APP" "$PATH_SCAN_ZIP"
-mkdir -p "$PATH_SCAN_EXTRACT"
-ditto -x -k "$PATH_SCAN_ZIP" "$PATH_SCAN_EXTRACT"
-path_scan_binary="$(find "$PATH_SCAN_EXTRACT" -type f -path '*/Contents/MacOS/CodexPetLimitRings' -print -quit)"
-if [[ -z "$path_scan_binary" ]]; then
-  echo "release verification failed: packaged app binary is missing after ZIP extraction" >&2
-  exit 1
-fi
-assert_no_local_absolute_paths "$path_scan_binary"
+(
+  cd "$VERIFY_ROOT"
+  shasum -a 256 "$(basename "$PATH_SCAN_ZIP")"
+) > "$PATH_SCAN_CHECKSUM"
+EXPECTED_MIN_OS="$DEPLOYMENT_TARGET" \
+  "$ROOT/tools/verify-release-artifact.sh" \
+  "$VERSION" \
+  "$PATH_SCAN_ZIP" \
+  "$PATH_SCAN_CHECKSUM"
 
 "$APP_BIN" --preview "$PREVIEW" --size 164
 test -s "$PREVIEW"
@@ -118,7 +122,7 @@ grep -q 'MIT License' "$ROOT/LICENSE"
 test -f "$ROOT/resources/en.lproj/Localizable.strings"
 test -f "$ROOT/resources/ja.lproj/Localizable.strings"
 
-plist_version="$(plutil -extract CFBundleShortVersionString raw "$PLIST")"
+plist_version="$VERSION"
 source_version="$(sed -n 's/.*var version = "\([^"]*\)".*/\1/p' "$ROOT/tools/codex-pet-limit-rings.swift" | head -1)"
 if [[ -z "$source_version" || "$plist_version" != "$source_version" ]]; then
   echo "release verification failed: app-server client version does not match Info.plist" >&2
