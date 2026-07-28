@@ -31,7 +31,7 @@ Because the rings are drawn in a separate transparent overlay, they do not need 
 
 ## Quick Start
 
-The published v1.0.9 app supports macOS 15 and later on Apple silicon. Download the app and checksum from the [v1.0.9 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.9), verify the ZIP SHA-256 against `e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273`, then open the verified app.
+The published v1.0.10 app supports macOS 15 and later on Apple silicon. Download the app and checksum from the [v1.0.10 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.10), verify the ZIP SHA-256 against `ad4c87912b085695eeda10bba6e911b235e1077d11059d6002fb6d1838a0d3df`, then open the verified app.
 
 If you are replacing an existing installation or want the complete checksum, backup, LaunchAgent, diagnostic, and rollback procedure, use [Verified Installation And Rollback](#verified-installation-and-rollback). To build and install from source with launch at login, run:
 
@@ -65,6 +65,7 @@ The privacy boundary is intentionally narrow: no ChatGPT credential copying, acc
 - v1.0.0 through v1.0.3 strengthened compatibility, freshness, full-snapshot reconciliation, and optional short-window handling.
 - v1.0.4 through v1.0.8 hardened pet lifecycle, current ChatGPT surface and size tracking, release path privacy, watchdog recovery, and in-place app relaunch recovery.
 - v1.0.9 recovers stale refreshes after a reset, timeout, disconnection, or app-server initialization stall without expanding the read-only or memory-only boundary.
+- v1.0.10 strengthens runtime fallback trust, LaunchServices startup, menu lifecycle safety, package verification, installation safety, and complete rollback.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release-by-release history.
 
@@ -86,17 +87,17 @@ Pet wakeups are handled by a lightweight filesystem watcher on Codex's local glo
 
 ## Verified Installation And Rollback
 
-### Install The Published v1.0.9 App
+### Install The Published v1.0.10 App
 
-The published v1.0.9 app supports macOS 15 and later on Apple silicon. The verified source and package gates pass on macOS 15 and macOS 26, and the published artifact passed the public smoke test.
+The published v1.0.10 app supports macOS 15 and later on Apple silicon. The verified source and package gates pass on macOS 15 and macOS 26, and the published artifact passed the public smoke test.
 
-Download the app and checksum from the [v1.0.9 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.9), then verify the ZIP before opening it. The expected ZIP SHA-256 is `e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273`.
+Download the app and checksum from the [v1.0.10 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.10), then verify the ZIP before opening it. The expected ZIP SHA-256 is `ad4c87912b085695eeda10bba6e911b235e1077d11059d6002fb6d1838a0d3df`.
 
 ```bash
 set -euo pipefail
 
-version=1.0.9
-expected_sha=e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273
+version=1.0.10
+expected_sha=ad4c87912b085695eeda10bba6e911b235e1077d11059d6002fb6d1838a0d3df
 release_dir="$HOME/Downloads/CodexPetLimitRings-v$version"
 base_url="https://github.com/Driedsandwich/codex-pet-limit-rings/releases/download/v$version"
 
@@ -115,7 +116,7 @@ Back up an existing installation, stop its LaunchAgent, and replace it with the 
 ```bash
 set -euo pipefail
 
-version=1.0.9
+version=1.0.10
 release_dir="${release_dir:-$HOME/Downloads/CodexPetLimitRings-v$version}"
 backup="$HOME/Library/Application Support/CodexPetLimitRings/Backups/$(date +%Y%m%d-%H%M%S)"
 app="$HOME/Applications/CodexPetLimitRings.app"
@@ -313,20 +314,20 @@ Build an ad-hoc-signed macOS arm64 ZIP and SHA-256 file under ignored `dist/`:
 tools/package-release.sh
 ```
 
-CI intentionally smoke-tests v1.0.0 as the long-term published compatibility baseline, including its pinned digest and compatibility checks, while building and testing the current source. Because that artifact predates the v1.0.4 build-path sanitization gate, only its local absolute-path scan has an explicit version-specific legacy exception; later artifacts do not inherit that exception. The manual smoke commands below target the latest published v1.0.9 artifact and require every current gate without replacing the installed app:
+CI intentionally smoke-tests v1.0.0 as the long-term published compatibility baseline, including its pinned digest and compatibility checks, while building and testing the current source. Because that artifact predates the v1.0.4 build-path sanitization gate, only its local absolute-path scan has an explicit version-specific legacy exception; later artifacts do not inherit that exception. The manual smoke commands below target the latest published v1.0.10 artifact and require every current gate without replacing the installed app:
 
 ```bash
 EXPECTED_MIN_OS=15.0 \
-EXPECTED_SHA256=e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273 \
-  tools/smoke-release-artifact.sh 1.0.9
+EXPECTED_SHA256=ad4c87912b085695eeda10bba6e911b235e1077d11059d6002fb6d1838a0d3df \
+  tools/smoke-release-artifact.sh 1.0.10
 ```
 
 On an older macOS host, perform checksum, signature, architecture, version, and deployment-target inspection without launching the binary:
 
 ```bash
 EXPECTED_MIN_OS=15.0 \
-EXPECTED_SHA256=e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273 \
-  tools/smoke-release-artifact.sh 1.0.9 --inspect-only
+EXPECTED_SHA256=ad4c87912b085695eeda10bba6e911b235e1077d11059d6002fb6d1838a0d3df \
+  tools/smoke-release-artifact.sh 1.0.10 --inspect-only
 ```
 
 ## Experiments
