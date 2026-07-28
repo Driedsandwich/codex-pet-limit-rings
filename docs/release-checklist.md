@@ -65,7 +65,9 @@ Confirm the menu-bar source is `App Server`, `Cached`, or `Local`, full limit de
 - The published artifact smoke test passed checksum, local-path sanitization, signature, architecture, version, deployment-target, English/Japanese resources, preview-execution, and privacy-safe diagnostic checks:
 
 ```bash
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.9
+EXPECTED_MIN_OS=15.0 \
+EXPECTED_SHA256=e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273 \
+  tools/smoke-release-artifact.sh 1.0.9
 ```
 
 ### Published v1.0.8 Evidence

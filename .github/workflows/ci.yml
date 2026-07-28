@@ -24,8 +24,18 @@ jobs:
         run: tools/verify-release.sh
       - name: Build and verify the current package candidate
         run: tools/package-release.sh
-      - name: Smoke-test the published v1.0.0 artifact
+      - name: Smoke-test the pinned v1.0.0 provenance baseline
         env:
           EXPECTED_MIN_OS: "15.0"
+          EXPECTED_SHA256: "21d1eb306b3b3211c1911636e6cf3544bf94064af160b6f061949595b369229a"
+          # v1.0.0 predates release-path sanitization; this exception is limited
+          # to its fixed digest and does not apply to current artifacts.
+          ALLOW_LEGACY_LOCAL_PATHS: "1"
         run: |
           tools/smoke-release-artifact.sh 1.0.0
+      - name: Smoke-test the pinned latest published v1.0.9 artifact
+        env:
+          EXPECTED_MIN_OS: "15.0"
+          EXPECTED_SHA256: "e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273"
+        run: |
+          tools/smoke-release-artifact.sh 1.0.9

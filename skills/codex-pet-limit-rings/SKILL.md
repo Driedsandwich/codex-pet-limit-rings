@@ -77,6 +77,12 @@ Run `CodexPetLimitRings --diagnose` for a privacy-safe JSON compatibility check.
 
 Pet wakeups, size changes, and moves are driven by a filesystem watcher on `~/.codex/.codex-global-state.json`, official `com.openai.codex` application lifecycle notifications, and a persistent two-second dispatch watchdog for missed events. The fallback must not depend on a main-run-loop `Timer`, so an in-place ChatGPT update that replaces the process can hide stale rings and rediscover the new pet window without restarting the companion app. A matching on-screen Codex pet overlay is required before displaying rings; persisted open state and bounds are only a positioning reference. Legacy builds use the saved overlay geometry. Current builds that omit top-level mascot dimensions must use the exact on-screen `Codex Pet Mascot Effect` window owned by the running `com.openai.codex` process. Derive the current mascot size from that live effect center and the current saved mascot origin; use historical size only when live geometry is missing or impossible so the full pet-size slider range can resize the rings. If macOS redacts that window name, require the official process, on-screen pet-effect layer, and bounded pet-relative geometry that still admits the maximum slider effect surface, without requesting a new permission. Do not treat generic `ChatGPT`, third-party wrapper, or Stage Manager windows as pet evidence. Hide the rings when Codex exits, the pet closes, or its overlay is minimized or on another Space, and restore them when the live overlay returns. Keep that live-window gate, event-driven path, size tracking, and drag mismatch protection intact when changing frame-following behavior.
 
+For packaged launch-at-login installs, keep the LaunchAgent waiting on
+`/usr/bin/open -W CodexPetLimitRings.app`. Do not execute the inner GUI binary
+directly from launchd; current macOS and ChatGPT builds can leave that path in
+an app-server initialization loop even though a LaunchServices-owned launch is
+healthy.
+
 ## Editing Workflow
 
 When changing behavior or visuals:
@@ -90,10 +96,18 @@ bash -n tools/*.sh
 deployment_target="$(plutil -extract LSMinimumSystemVersion raw tools/CodexPetLimitRings-Info.plist)"
 swiftc -parse-as-library -target "arm64-apple-macosx$deployment_target" tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -framework UserNotifications -lsqlite3
 tools/test-limit-rings.sh
+bash tools/test-release-safety.sh
 tools/verify-release.sh
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.0
+EXPECTED_MIN_OS=15.0 EXPECTED_SHA256=21d1eb306b3b3211c1911636e6cf3544bf94064af160b6f061949595b369229a ALLOW_LEGACY_LOCAL_PATHS=1 tools/smoke-release-artifact.sh 1.0.0
+EXPECTED_MIN_OS=15.0 EXPECTED_SHA256=e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273 tools/smoke-release-artifact.sh 1.0.9
 tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
 ```
+
+The verifier accepts `ALLOW_LEGACY_LOCAL_PATHS=1` only for v1.0.0 at the fixed
+SHA-256 shown above. That provenance artifact predates release-path sanitization.
+Current and future artifacts must pass the local-path check, and locally
+packaged candidates must pass the same core artifact verifier as downloaded
+releases.
 
 4. Relaunch with `tools/run-limit-rings.sh` for development or `tools/install-limit-rings.sh` for the packaged login-item flow.
 

@@ -25,10 +25,13 @@ struct LimitRingsTests {
             try testCodexApplicationLifecycleRefreshGate()
             try testPetDragLiveMismatchGate()
             try testAppServerRateLimitDecode()
+            try testAppServerOneShotPhaseAndDeadlineContract()
+            try testLiveAppServerInitializationDeadlineDoesNotCutOffRead()
             try testOptionalShortWindowDisappearsAndReturns()
             try testSparseRateLimitMergePreservesSnapshotMetadata()
             try testFullSnapshotWatchdogAndSingleInFlightGate()
             try testManualRefreshRecoveryAndGenerationSafety()
+            try testUsageRequestGateCoalescesAndRejectsLateResponses()
             try testWindowRolloverRefreshesSnapshotMetadata()
             try testResetCreditRecoverySequence()
             try testBufferedSparseUpdatesReapplyAfterFullSnapshot()
@@ -37,6 +40,8 @@ struct LimitRingsTests {
             try testAccountUsageDecodeAndFourteenDayNormalization()
             try testAccountUsageEmptyAndAccessibleBars()
             try testUsageMilestonesAndConnectionHealth()
+            try testConnectionHealthMenuRebuildGate()
+            try testConnectionHealthDelegateCallbacksPreserveMenuStructure()
             try testCompatibilityFreshnessAndSafeFailureReasons()
             try testUnknownAndOptionalProtocolFieldsRemainCompatible()
             try testNotificationTransitionsAndDedupe()
@@ -46,6 +51,8 @@ struct LimitRingsTests {
             try testAccessibilityRendererProducesImage()
             try testEnglishJapaneseLocalizationParity()
             try testRecentAppServerSnapshotSurvivesTransientFailure()
+            try testProviderCompletionAndFallbackUseFreshSingleNow()
+            try testNewestValidFallbackWinsAndLiveSeedIsThreadSafe()
             try testExpiredAppServerSnapshotIsDiscarded()
             try testNewestLogsDatabaseWins()
             try testSQLiteRateLimitFallback()
@@ -67,6 +74,138 @@ struct LimitRingsTests {
         )
         try expect(paths.contains("/custom/bin/codex"), "expected PATH-based Codex CLI discovery")
         try expect(paths.contains("/opt/homebrew/bin/codex"), "expected Homebrew Codex CLI discovery")
+    }
+
+    private static func testAppServerOneShotPhaseAndDeadlineContract() throws {
+        try expect(appServerInitializeTimeout == 15, "expected app-server initialization to allow 15 seconds")
+        try expect(appServerRequestTimeout == 5, "expected rate-limit and usage reads to retain the 5-second timeout")
+
+        var slowInitialization = AppServerOneShotGate()
+        try expect(
+            appServerOneShotDeadlineError(
+                phase: slowInitialization.phase,
+                elapsedInPhase: 7.5,
+                responseTimeoutError: "rate_limit_timeout"
+            ) == nil,
+            "expected a measured 7.5-second initialization to remain eligible for success"
+        )
+        try expect(slowInitialization.receiveInitialize(), "expected slow initialization to enter the request phase once")
+        try expect(
+            slowInitialization.phase == .awaitingResponse,
+            "expected the read deadline to begin only after initialization completes"
+        )
+        try expect(
+            appServerOneShotDeadlineError(
+                phase: slowInitialization.phase,
+                elapsedInPhase: 4.9,
+                responseTimeoutError: "rate_limit_timeout"
+            ) == nil,
+            "expected a rate-limit read below five seconds to keep waiting"
+        )
+        try expect(slowInitialization.resolve(), "expected the successful read to resolve")
+
+        var initializationTimeout = AppServerOneShotGate()
+        try expect(
+            appServerOneShotDeadlineError(
+                phase: initializationTimeout.phase,
+                elapsedInPhase: 15,
+                responseTimeoutError: "rate_limit_timeout"
+            ) == "initialize_timeout",
+            "expected initialization to time out at the separate 15-second deadline"
+        )
+        try expect(initializationTimeout.resolve(), "expected the initialization timeout to resolve once")
+        try expect(!initializationTimeout.receiveInitialize(), "expected a late initialize callback to be ignored")
+        try expect(!initializationTimeout.resolve(), "expected a late callback not to resolve a second time")
+
+        var requestTimeout = AppServerOneShotGate()
+        try expect(requestTimeout.receiveInitialize(), "expected request-timeout setup to finish initialization")
+        try expect(
+            appServerOneShotDeadlineError(
+                phase: requestTimeout.phase,
+                elapsedInPhase: 5,
+                responseTimeoutError: "account_usage_timeout"
+            ) == "account_usage_timeout",
+            "expected usage read timeout to remain five seconds after initialization"
+        )
+        try expect(requestTimeout.resolve(), "expected request timeout to resolve once")
+        try expect(
+            appServerOneShotDeadlineError(
+                phase: requestTimeout.phase,
+                elapsedInPhase: 50,
+                responseTimeoutError: "account_usage_timeout"
+            ) == nil,
+            "expected an already-resolved request not to produce another timeout"
+        )
+
+        try expect(
+            appServerOneShotTerminationError(phase: .initializing) == "initialize_failed",
+            "expected termination during initialization to retain the safe initialize failure"
+        )
+        try expect(
+            appServerOneShotTerminationError(phase: .awaitingResponse) == "app_server_terminated",
+            "expected termination during a read to retain the safe app-server failure"
+        )
+        try expect(
+            appServerOneShotTerminationError(phase: .resolved) == nil,
+            "expected a late termination callback after resolution to be ignored"
+        )
+    }
+
+    private static func testLiveAppServerInitializationDeadlineDoesNotCutOffRead() throws {
+        let generation = 7
+        var initializationGate = AppServerLiveInitializationGate()
+        var rateLimitGate = RateLimitRequestGate()
+
+        initializationGate.begin(generation: generation)
+        try expect(
+            initializationGate.shouldTimeout(
+                generation: generation,
+                currentGeneration: generation,
+                processIsRunning: true,
+                stopped: false
+            ),
+            "expected the 15-second initialization watchdog to remain armed before initialize succeeds"
+        )
+
+        try expect(
+            initializationGate.complete(generation: generation),
+            "expected initialization at 14 seconds to disarm its generation-bound watchdog"
+        )
+        guard let requestToken = rateLimitGate.begin() else {
+            throw LimitRingsTestError.failed("expected the post-initialize rate-limit read to begin")
+        }
+        try expect(
+            !initializationGate.shouldTimeout(
+                generation: generation,
+                currentGeneration: generation,
+                processIsRunning: true,
+                stopped: false
+            ),
+            "expected the initialization watchdog not to cut off a read completing after the 15-second mark"
+        )
+        try expect(
+            rateLimitGate.isCurrent(requestToken),
+            "expected the separate five-second read deadline to remain active after slow initialization"
+        )
+        try expect(
+            rateLimitGate.complete(token: requestToken),
+            "expected a rate-limit response two seconds after slow initialization to complete normally"
+        )
+        try expect(
+            !initializationGate.complete(generation: generation),
+            "expected a duplicate initialize response not to start another initial read"
+        )
+
+        initializationGate.begin(generation: generation + 1)
+        try expect(
+            !initializationGate.shouldTimeout(
+                generation: generation,
+                currentGeneration: generation + 1,
+                processIsRunning: true,
+                stopped: false
+            ),
+            "expected an older generation initialization callback to remain invalid"
+        )
     }
 
     private static func testPetLifecycleRequiresLiveOverlay() throws {
@@ -613,6 +752,103 @@ struct LimitRingsTests {
         try expect(ringReadoutDetail("7d", isStale: false, staleLabel: "Stale") == "7d", "expected current reset metadata to remain unchanged")
     }
 
+    private static func testUsageRequestGateCoalescesAndRejectsLateResponses() throws {
+        try expect(
+            usageRequestTransportAction(isProcessRunning: false, isReady: false) == .disconnected,
+            "expected a missing app-server process not to accept a usage request"
+        )
+        try expect(
+            usageRequestTransportAction(isProcessRunning: true, isReady: false) == .deferUntilReady,
+            "expected a running app-server that is still initializing not to receive a usage request"
+        )
+        try expect(
+            usageRequestTransportAction(isProcessRunning: true, isReady: true) == .send,
+            "expected usage transport only after app-server initialization is ready"
+        )
+
+        var initializationGate = UsageRequestGate()
+        initializationGate.deferUntilReady(origin: .initial, generation: 5, epoch: 11)
+        try expect(initializationGate.pending, "expected a usage request during initialization to remain pending")
+        try expect(!initializationGate.inFlight, "expected initialization not to start a usage transport before ready")
+        initializationGate.deferUntilReady(origin: .manual, generation: 5, epoch: 12)
+        try expect(initializationGate.origin == .manual, "expected a manual request to coalesce onto the pending initialization request")
+        try expect(initializationGate.epoch == 12, "expected a coalesced pending request to retain the latest UI epoch")
+        try expect(
+            initializationGate.beginPending(generation: 4) == nil,
+            "expected an old connection generation not to send the pending usage request"
+        )
+        guard let initializationID = initializationGate.beginPending(generation: 5) else {
+            throw LimitRingsTestError.failed("expected ready to send the pending usage request exactly once")
+        }
+        try expect(initializationGate.inFlight, "expected the ready transition to activate one usage transport")
+        try expect(
+            initializationGate.beginPending(generation: 5) == nil,
+            "expected repeated ready callbacks not to duplicate the usage request"
+        )
+        try expect(
+            initializationGate.complete(responseID: initializationID, generation: 5)
+                == UsageRequestCompletion(origin: .manual, epoch: 12),
+            "expected the initialization-ordered request to complete the latest coalesced epoch"
+        )
+
+        var gate = UsageRequestGate()
+        guard let scheduledID = gate.begin(origin: .scheduled, generation: 7, epoch: 41) else {
+            throw LimitRingsTestError.failed("expected the first usage request to start")
+        }
+        try expect(scheduledID == 3, "expected usage request IDs to start outside initialize and rate-limit IDs")
+        try expect(gate.begin(origin: .manual, generation: 7, epoch: 99) == nil, "expected a manual usage refresh to coalesce with the in-flight request")
+        try expect(gate.origin == .manual, "expected the coalesced request to retain manual priority")
+        try expect(gate.epoch == 99, "expected a coalesced transport to adopt the latest UI epoch")
+        try expect(gate.complete(responseID: scheduledID, generation: 6) == nil, "expected a response from an old connection generation to be ignored")
+        try expect(gate.inFlight, "expected an old-generation response not to clear the current request")
+        try expect(gate.complete(responseID: scheduledID + 1, generation: 7) == nil, "expected a mismatched response ID to be ignored")
+        try expect(
+            gate.complete(responseID: scheduledID, generation: 7)
+                == UsageRequestCompletion(origin: .manual, epoch: 99),
+            "expected the matching response to complete the latest coalesced UI epoch"
+        )
+
+        guard let nextID = gate.begin(origin: .scheduled, generation: 8, epoch: 42) else {
+            throw LimitRingsTestError.failed("expected a later usage request to start")
+        }
+        try expect(nextID == scheduledID + 1, "expected every usage request to receive a unique ID")
+        try expect(
+            gate.begin(origin: .manual, generation: 8, epoch: 43) == nil,
+            "expected the timeout interleaving to coalesce on the active transport"
+        )
+        try expect(
+            gate.cancel() == UsageRequestCompletion(origin: .manual, epoch: 43),
+            "expected timeout cancellation to report the latest coalesced UI epoch"
+        )
+        try expect(gate.complete(responseID: nextID, generation: 8) == nil, "expected a late response after disconnect cancellation to be ignored")
+        try expect(!gate.inFlight, "expected disconnect cancellation to clear the usage gate")
+
+        var uiTracker = UsageUIRequestTracker()
+        let firstEpoch = uiTracker.begin()
+        let secondEpoch = uiTracker.begin()
+        try expect(secondEpoch != firstEpoch, "expected a later request to receive a new UI epoch")
+        try expect(!uiTracker.complete(epoch: firstEpoch), "expected an old completion not to clear a newer loading state")
+        try expect(uiTracker.inFlight, "expected the newer request to remain visibly in flight")
+        try expect(uiTracker.complete(epoch: secondEpoch), "expected the current completion to clear the newer request")
+
+        var interleavedGate = UsageRequestGate()
+        guard let firstTransportID = interleavedGate.begin(
+            origin: .scheduled,
+            generation: 10,
+            epoch: firstEpoch
+        ) else {
+            throw LimitRingsTestError.failed("expected the interleaving transport to start")
+        }
+        try expect(
+            interleavedGate.begin(origin: .manual, generation: 10, epoch: secondEpoch) == nil,
+            "expected the later UI request to coalesce onto the active transport"
+        )
+        try expect(
+            interleavedGate.complete(responseID: firstTransportID, generation: 10)?.epoch == secondEpoch,
+            "expected the coalesced transport response to complete the latest UI epoch"
+        )
+    }
+
     private static func testWindowRolloverRefreshesSnapshotMetadata() throws {
         let expiredResetAt = 1_000.0
         let refreshedResetAt = 20_000.0
@@ -842,6 +1078,60 @@ struct LimitRingsTests {
         try expect(!shouldApplyPolledLimitState(isLiveConnected: true), "expected an in-flight fallback result not to overwrite restored live state")
     }
 
+    private static func testConnectionHealthMenuRebuildGate() throws {
+        let currentRows = ["● Live app-server updates", "Full snapshot metadata: Current"]
+        let staleRows = ["! Stale full snapshot", "Full snapshot metadata: Stale"]
+        try expect(
+            connectionHealthMenuShouldRebuild(isOpen: false, renderedRows: nil, nextRows: currentRows),
+            "expected the initial connection-health menu to render"
+        )
+        try expect(
+            !connectionHealthMenuShouldRebuild(isOpen: false, renderedRows: currentRows, nextRows: currentRows),
+            "expected unchanged watchdog ticks not to rebuild the menu"
+        )
+        try expect(
+            !connectionHealthMenuShouldRebuild(isOpen: true, renderedRows: currentRows, nextRows: staleRows),
+            "expected freshness changes to defer while the menu is open"
+        )
+        try expect(
+            connectionHealthMenuShouldRebuild(isOpen: false, renderedRows: currentRows, nextRows: staleRows),
+            "expected a deferred freshness change to render after the menu closes"
+        )
+    }
+
+    private static func testConnectionHealthDelegateCallbacksPreserveMenuStructure() throws {
+        let root = try temporaryDirectory(named: "connection-health-menu")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = LimitRingsApp(
+            config: LimitRingsConfig(
+                codexHome: root,
+                globalStatePath: root.appendingPathComponent("global-state.json"),
+                logsPath: root.appendingPathComponent("missing.sqlite")
+            )
+        )
+        let menu = NSMenu(title: "Connection Health")
+        menu.addItem(NSMenuItem(title: "sentinel", action: nil, keyEquivalent: ""))
+        app.installConnectionHealthMenuForTesting(menu)
+
+        let initialCount = menu.numberOfItems
+        app.menuWillOpen(menu)
+        try expect(
+            menu.numberOfItems == initialCount,
+            "expected menuWillOpen not to mutate the menu structure"
+        )
+        app.menuDidClose(menu)
+        try expect(
+            menu.numberOfItems == initialCount,
+            "expected menuDidClose not to mutate the menu structure synchronously"
+        )
+
+        app.menuNeedsUpdate(menu)
+        try expect(
+            menu.numberOfItems > 0 && menu.item(at: 0)?.title != "sentinel",
+            "expected menuNeedsUpdate to perform the deferred semantic row render"
+        )
+    }
+
     private static func testCompatibilityFreshnessAndSafeFailureReasons() throws {
         let now = Date(timeIntervalSince1970: 10_000)
         try expect(dataFreshnessState(observedAt: nil, now: now, maxAge: 100) == .waiting, "expected missing observation to wait")
@@ -1011,6 +1301,310 @@ struct LimitRingsTests {
         let cached = reader.readLatest()
         try expect(cached.primary?.remainingPercent == 90, "expected cached primary value")
         try expect(cached.source == "cached", "expected cached source label")
+    }
+
+    private static func testNewestValidFallbackWinsAndLiveSeedIsThreadSafe() throws {
+        let root = try temporaryDirectory(named: "newest-fallback")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let logsPath = root.appendingPathComponent("logs_2.sqlite")
+        let now = Date()
+        let localObservedAt = Int64(now.addingTimeInterval(-60).timeIntervalSince1970)
+        let localObservedNanoseconds: Int64 = 750_000_000
+        let resetAt = Int64(now.addingTimeInterval(3_600).timeIntervalSince1970)
+        var database: OpaquePointer?
+        guard sqlite3_open(logsPath.path, &database) == SQLITE_OK, let database else {
+            throw LimitRingsTestError.failed("could not create newest-fallback database")
+        }
+        let body = #"{"type":"codex.rate_limits","plan_type":"pro","rate_limits":{"primary":{"used_percent":30,"window_minutes":300,"reset_at":RESET_AT}}}"#
+            .replacingOccurrences(of: "RESET_AT", with: String(resetAt))
+        let escapedBody = body.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        CREATE TABLE logs (
+            id INTEGER PRIMARY KEY,
+            ts INTEGER NOT NULL,
+            ts_nanos INTEGER NOT NULL,
+            feedback_log_body TEXT NOT NULL
+        );
+        INSERT INTO logs (ts, ts_nanos, feedback_log_body)
+        VALUES (\(localObservedAt), \(localObservedNanoseconds), '\(escapedBody)');
+        """
+        guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
+            sqlite3_close(database)
+            throw LimitRingsTestError.failed("could not seed newest-fallback database")
+        }
+        sqlite3_close(database)
+
+        let newerCachedReader = LimitStateReader(logsPath: logsPath, appServerStateProvider: { nil })
+        newerCachedReader.recordAppServerState(LimitState(
+            planType: "pro",
+            primary: LimitBucket(usedPercent: 10, windowMinutes: 300, resetAt: TimeInterval(resetAt)),
+            secondary: nil,
+            additional: [],
+            observedAt: now.addingTimeInterval(-30),
+            source: "app-server"
+        ))
+        let newerCached = newerCachedReader.readLatest()
+        try expect(newerCached.primary?.remainingPercent == 90, "expected the newer cached app-server value to beat older SQLite data")
+        try expect(newerCached.source == "cached", "expected the newer live seed to be labelled Cached during fallback")
+
+        let newerLocalReader = LimitStateReader(logsPath: logsPath, appServerStateProvider: { nil })
+        newerLocalReader.recordAppServerState(LimitState(
+            planType: "pro",
+            primary: LimitBucket(usedPercent: 5, windowMinutes: 300, resetAt: TimeInterval(resetAt)),
+            secondary: nil,
+            additional: [],
+            observedAt: now.addingTimeInterval(-120),
+            source: "app-server"
+        ))
+        let newerLocal = newerLocalReader.readLatest()
+        try expect(newerLocal.primary?.remainingPercent == 70, "expected newer SQLite data to beat an older cached app-server value")
+        try expect(newerLocal.source == "local", "expected the newer SQLite fallback to retain the Local label")
+
+        let sameSecondReader = LimitStateReader(logsPath: logsPath, appServerStateProvider: { nil })
+        sameSecondReader.recordAppServerState(LimitState(
+            planType: "pro",
+            primary: LimitBucket(usedPercent: 5, windowMinutes: 300, resetAt: TimeInterval(resetAt)),
+            secondary: nil,
+            additional: [],
+            observedAt: Date(
+                timeIntervalSince1970: TimeInterval(localObservedAt) + 0.25
+            ),
+            source: "app-server"
+        ))
+        let sameSecondLocal = sameSecondReader.readLatest()
+        try expect(
+            sameSecondLocal.primary?.remainingPercent == 70,
+            "expected SQLite ts_nanos to make a same-second newer local observation win"
+        )
+        try expect(
+            sameSecondLocal.source == "local",
+            "expected nanosecond-precise SQLite ordering to retain the Local label"
+        )
+
+        let futureCachedReader = LimitStateReader(
+            logsPath: root.appendingPathComponent("missing-future-cache.sqlite"),
+            appServerStateProvider: { nil },
+            nowProvider: { now }
+        )
+        futureCachedReader.recordAppServerState(LimitState(
+            planType: "pro",
+            primary: LimitBucket(usedPercent: 5, windowMinutes: 300, resetAt: TimeInterval(resetAt)),
+            secondary: nil,
+            additional: [],
+            observedAt: now.addingTimeInterval(60),
+            source: "app-server"
+        ))
+        let futureCached = futureCachedReader.readLatest()
+        try expect(futureCached.source == "none", "expected a future cached observation to fail closed")
+        futureCachedReader.recordAppServerState(LimitState(
+            planType: "pro",
+            primary: LimitBucket(usedPercent: 40, windowMinutes: 300, resetAt: TimeInterval(resetAt)),
+            secondary: nil,
+            additional: [],
+            observedAt: now,
+            source: "app-server"
+        ))
+        let recoveredCached = futureCachedReader.readLatest()
+        try expect(
+            recoveredCached.primary?.remainingPercent == 60,
+            "expected a rejected future cache seed not to block a later normal live seed"
+        )
+        try expect(recoveredCached.source == "cached", "expected the normal live seed to restore Cached fallback")
+
+        let skewedCachedReader = LimitStateReader(
+            logsPath: root.appendingPathComponent("missing-skew-cache.sqlite"),
+            appServerStateProvider: { nil },
+            nowProvider: { now }
+        )
+        skewedCachedReader.recordAppServerState(LimitState(
+            planType: "pro",
+            primary: LimitBucket(usedPercent: 5, windowMinutes: 300, resetAt: TimeInterval(resetAt)),
+            secondary: nil,
+            additional: [],
+            observedAt: now.addingTimeInterval(1),
+            source: "app-server"
+        ))
+        skewedCachedReader.recordAppServerState(LimitState(
+            planType: "pro",
+            primary: LimitBucket(usedPercent: 35, windowMinutes: 300, resetAt: TimeInterval(resetAt)),
+            secondary: nil,
+            additional: [],
+            observedAt: now,
+            source: "app-server"
+        ))
+        try expect(
+            skewedCachedReader.readLatest().primary?.remainingPercent == 65,
+            "expected bounded clock skew to normalize without poisoning later live observations"
+        )
+
+        var rollbackNow = Date(timeIntervalSince1970: 50_000)
+        let clockRollbackReader = LimitStateReader(
+            logsPath: root.appendingPathComponent("missing-clock-rollback.sqlite"),
+            appServerStateProvider: { nil },
+            nowProvider: { rollbackNow }
+        )
+        clockRollbackReader.recordAppServerState(LimitState(
+            planType: "pro",
+            primary: LimitBucket(
+                usedPercent: 10,
+                windowMinutes: 300,
+                resetAt: rollbackNow.addingTimeInterval(3_600).timeIntervalSince1970
+            ),
+            secondary: nil,
+            additional: [],
+            observedAt: rollbackNow,
+            source: "app-server"
+        ))
+        let originalClock = rollbackNow
+        rollbackNow = originalClock.addingTimeInterval(-2)
+        clockRollbackReader.recordAppServerState(LimitState(
+            planType: "pro",
+            primary: LimitBucket(
+                usedPercent: 40,
+                windowMinutes: 300,
+                resetAt: rollbackNow.addingTimeInterval(3_600).timeIntervalSince1970
+            ),
+            secondary: nil,
+            additional: [],
+            observedAt: rollbackNow,
+            source: "app-server"
+        ))
+        try expect(
+            clockRollbackReader.readLatest().primary?.remainingPercent == 90,
+            "expected bounded clock rollback to keep the nominally newer cache displayable"
+        )
+
+        rollbackNow = originalClock.addingTimeInterval(-120)
+        clockRollbackReader.recordAppServerState(LimitState(
+            planType: "pro",
+            primary: LimitBucket(
+                usedPercent: 40,
+                windowMinutes: 300,
+                resetAt: rollbackNow.addingTimeInterval(3_600).timeIntervalSince1970
+            ),
+            secondary: nil,
+            additional: [],
+            observedAt: rollbackNow,
+            source: "app-server"
+        ))
+        let clockRollbackFallback = clockRollbackReader.readLatest()
+        try expect(
+            clockRollbackFallback.primary?.remainingPercent == 60,
+            "expected a valid post-clock-rollback snapshot to replace an unusable future cache"
+        )
+        try expect(
+            clockRollbackFallback.source == "cached",
+            "expected fallback recovery after clock rollback to retain the Cached source label"
+        )
+
+        var futureDatabase: OpaquePointer?
+        guard sqlite3_open(logsPath.path, &futureDatabase) == SQLITE_OK, let futureDatabase else {
+            throw LimitRingsTestError.failed("could not reopen newest-fallback database")
+        }
+        let futureObservedAt = Int64(now.addingTimeInterval(60).timeIntervalSince1970)
+        let futureBody = #"{"type":"codex.rate_limits","plan_type":"pro","rate_limits":{"primary":{"used_percent":99,"window_minutes":300,"reset_at":RESET_AT}}}"#
+            .replacingOccurrences(of: "RESET_AT", with: String(resetAt))
+            .replacingOccurrences(of: "'", with: "''")
+        let futureSQL = """
+        INSERT INTO logs (ts, ts_nanos, feedback_log_body)
+        VALUES (\(futureObservedAt), 0, '\(futureBody)');
+        """
+        guard sqlite3_exec(futureDatabase, futureSQL, nil, nil, nil) == SQLITE_OK else {
+            sqlite3_close(futureDatabase)
+            throw LimitRingsTestError.failed("could not seed a future SQLite observation")
+        }
+        sqlite3_close(futureDatabase)
+        let futureLocal = LimitStateReader(
+            logsPath: logsPath,
+            appServerStateProvider: { nil },
+            nowProvider: { now }
+        ).readLatest()
+        try expect(
+            futureLocal.primary?.remainingPercent == 70,
+            "expected a future SQLite row not to mask the newest valid older row"
+        )
+        try expect(futureLocal.source == "local", "expected the valid older SQLite row to remain usable")
+
+        let concurrentReader = LimitStateReader(
+            logsPath: root.appendingPathComponent("missing.sqlite"),
+            appServerStateProvider: { nil }
+        )
+        let group = DispatchGroup()
+        let queue = DispatchQueue(label: "limit-rings-tests.cache", attributes: .concurrent)
+        for offset in 0..<100 {
+            group.enter()
+            queue.async {
+                concurrentReader.recordAppServerState(LimitState(
+                    planType: "pro",
+                    primary: LimitBucket(usedPercent: Double(offset), windowMinutes: 300, resetAt: TimeInterval(resetAt)),
+                    secondary: nil,
+                    additional: [],
+                    observedAt: now.addingTimeInterval(TimeInterval(offset - 100)),
+                    source: "app-server"
+                ))
+                group.leave()
+            }
+        }
+        group.wait()
+        let concurrentCached = concurrentReader.readLatest()
+        try expect(concurrentCached.primary?.usedPercent == 99, "expected concurrent live seeds to preserve the newest observation")
+        try expect(concurrentCached.source == "cached", "expected the thread-safe live seed to remain available as Cached")
+    }
+
+    private static func testProviderCompletionAndFallbackUseFreshSingleNow() throws {
+        let root = try temporaryDirectory(named: "provider-completion-time")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let base = Date(timeIntervalSince1970: 20_000)
+        let resetAt = base.addingTimeInterval(3_600).timeIntervalSince1970
+
+        var providerNow = base
+        var providerEvents: [String] = []
+        let slowProviderReader = LimitStateReader(
+            logsPath: root.appendingPathComponent("missing-provider.sqlite"),
+            appServerStateProvider: {
+                providerEvents.append("provider")
+                providerNow = base.addingTimeInterval(10)
+                return LimitState(
+                    planType: "pro",
+                    primary: LimitBucket(usedPercent: 25, windowMinutes: 300, resetAt: resetAt),
+                    secondary: nil,
+                    additional: [],
+                    observedAt: providerNow,
+                    source: "app-server"
+                )
+            },
+            nowProvider: {
+                providerEvents.append("now")
+                return providerNow
+            }
+        )
+        let providerState = slowProviderReader.readLatest()
+        try expect(
+            providerEvents == ["provider", "now"],
+            "expected provider completion time to be sampled once after a slow provider returns"
+        )
+        try expect(
+            providerState.primary?.remainingPercent == 75 && providerState.source == "app-server",
+            "expected a normal snapshot produced after a slow provider call not to be rejected as future-dated"
+        )
+
+        var fallbackEvents: [String] = []
+        let fallbackReader = LimitStateReader(
+            logsPath: root.appendingPathComponent("missing-fallback.sqlite"),
+            appServerStateProvider: {
+                fallbackEvents.append("provider")
+                return nil
+            },
+            nowProvider: {
+                fallbackEvents.append("now")
+                return base
+            }
+        )
+        _ = fallbackReader.readLatest()
+        try expect(
+            fallbackEvents == ["provider", "now"],
+            "expected the fallback path to capture one fresh time only after the provider returns nil"
+        )
     }
 
     private static func testExpiredAppServerSnapshotIsDiscarded() throws {
