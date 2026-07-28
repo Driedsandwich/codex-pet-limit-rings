@@ -29,6 +29,18 @@ When ChatGPT exits or the pet is closed, minimized, or moved off the active Spac
 
 Because the rings are drawn in a separate transparent overlay, they do not need pet-specific sprites, masks, metadata, or configuration. Change pets in Codex and the rings follow the new one automatically.
 
+## Quick Start
+
+The published v1.0.9 app supports macOS 15 and later on Apple silicon. Download the app and checksum from the [v1.0.9 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.9), verify the ZIP SHA-256 against `e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273`, then open the verified app.
+
+If you are replacing an existing installation or want the complete checksum, backup, LaunchAgent, diagnostic, and rollback procedure, use [Verified Installation And Rollback](#verified-installation-and-rollback). To build and install from source with launch at login, run:
+
+```bash
+tools/install-limit-rings.sh
+```
+
+No pet-specific setup is required. Notifications remain off until you explicitly enable them from the menu-bar icon.
+
 ## Driedsandwich Compatibility Line
 
 This fork keeps the original companion-app design and MIT license, then extends it for current ChatGPT/Codex desktop builds. The main differences from upstream are:
@@ -48,35 +60,13 @@ The privacy boundary is intentionally narrow: no ChatGPT credential copying, acc
 
 <br>
 
-The published v0.5.1 release sets an explicit macOS 15.0 deployment target for both source builds and the downloadable app. It supersedes the v0.5.0 binary, which remains available for provenance but requires macOS 26.
+- v0.5.1 established the current macOS 15.0 deployment baseline.
+- v0.6.0 through v0.9.0 added read-only limit details, opt-in notifications, accessibility and localization, memory-only usage summaries, live updates, and connection health.
+- v1.0.0 through v1.0.3 strengthened compatibility, freshness, full-snapshot reconciliation, and optional short-window handling.
+- v1.0.4 through v1.0.8 hardened pet lifecycle, current ChatGPT surface and size tracking, release path privacy, watchdog recovery, and in-place app relaunch recovery.
+- v1.0.9 recovers stale refreshes after a reset, timeout, disconnection, or app-server initialization stall without expanding the read-only or memory-only boundary.
 
-The published v0.6.0 release adds read-only limit intelligence, opt-in notifications, accessibility-aware rendering, and English/Japanese UI. It deliberately does not consume reset credits, read daily account usage, or collect per-thread usage.
-
-The published v0.7.0 release adds memory-only Daily Usage Insights through the app-server `account/usage/read` method available in the tested schema. It does not collect per-thread usage, inspect transcripts, store usage history, or mutate the account.
-
-The published v0.8.0 release keeps one app-server connection open for immediate sparse rate-limit updates, reconnects with bounded backoff, and adds current-streak, peak-day, and lifetime usage summaries without expanding the privacy boundary.
-
-The published v0.9.0 release adds two aggregate usage milestones and explicit connection-health status using only fields and state already held in memory. It adds no thread data, persistence, notification, permission, or account mutation.
-
-The published v1.0.0 release strengthens compatibility and data trust. It identifies the active Codex CLI version, distinguishes live/cached/local data, labels rate-limit and usage freshness, and classifies connection failures without exposing paths or account data. It adds no request, persistence, permission, notification, or mutation path.
-
-The published v1.0.1 release adds an adaptive full-snapshot reconcile only when a connected app-server has produced no successful rate-limit observation for 120 seconds. Manual and scheduled reads coalesce, sparse live updates win races with full responses, and cadence timestamps remain memory-only.
-
-The published v1.0.2 release anchors that reconcile deadline to the last successful full snapshot. Sparse notifications still update live values immediately, but no longer postpone reset-time and other snapshot-metadata refreshes. Connection Health labels snapshot metadata freshness separately without adding persistence or permissions.
-
-The published v1.0.3 release handles the current weekly-only response after the five-hour short-window limit stopped being reported. It classifies windows by duration, removes stale short-window display and notification history, preserves sparse/full race safety, and restores the short ring automatically if Codex reports it again.
-
-The published v1.0.4 release hides the rings whenever no live, on-screen Codex pet overlay exists and restores them when the pet returns. Its release build also removes build-machine source paths and verifies both the direct binary and the app binary re-extracted from the ZIP.
-
-The published v1.0.5 release replaces the one-shot full-snapshot timer with a persistent monotonic watchdog. It retries overdue reads through the existing timeout and reconnect path, and labels old full metadata as stale rather than live without adding persistence, permissions, or account mutation.
-
-The published v1.0.6 release restores ring placement for current ChatGPT pet surfaces that omit top-level mascot dimensions. It binds live pet evidence to the official `com.openai.codex` process, preserves legacy matching and drag behavior, and adds no permission or account-data access.
-
-The published v1.0.7 release resizes and recenters the rings across the current ChatGPT pet-size slider range, including the maximum setting. It derives the runtime pet size from the live mascot-effect center and saved pet origin while preserving lifecycle, drag, multi-display, and privacy boundaries.
-
-The published v1.0.8 release restores the rings after an in-place ChatGPT desktop app update replaces or relaunches the official application process. It observes official app lifecycle events and uses a persistent two-second pet-frame watchdog while preserving the live-window display gate and existing privacy boundary.
-
-The published v1.0.9 release recovers stale usage-limit refreshes after a reset, timeout, disconnection, or app-server initialization stall. It preserves healthy single-in-flight coalescing, invalidates older connection generations, escalates an overdue watchdog read through bounded reconnect, and marks overdue values as stale without expanding the read-only or memory-only boundary.
+See [CHANGELOG.md](CHANGELOG.md) for the complete release-by-release history.
 
 </details>
 
@@ -84,15 +74,17 @@ The upstream baseline and the split between upstream-compatible and downstream-o
 
 Publication provenance and current release status are recorded in [PUBLICATION_RECORD.md](PUBLICATION_RECORD.md).
 
+The reliability-first product boundary and change triggers are recorded in [docs/maintenance-strategy.md](docs/maintenance-strategy.md).
+
 ## Why It Works This Way
 
 The important design choice is the companion boundary. A menu item inside Codex itself would mean patching Electron app files and redoing that patch after app updates. That is brittle and hard to open source.
 
 `codex-pet-limit-rings` stays outside the ChatGPT desktop app. It reads local pet-position hints, asks the bundled Codex app-server for rate limits, and renders its own transparent always-on-top window around the pet. The result is reversible, inspectable, and easy for another Codex agent to install or modify without copying ChatGPT credentials.
 
-Pet wakeups are handled by a lightweight filesystem watcher on Codex's local global-state file, with a slow fallback timer as a safety net. That lets the rings snap back when the pet is re-enabled without constantly polling for position changes.
+Pet wakeups are handled by a lightweight filesystem watcher on Codex's local global-state file, official ChatGPT application lifecycle events, and a persistent two-second dispatch watchdog for missed events. That lets the rings snap back when the pet is re-enabled or ChatGPT relaunches without depending on a main-run-loop timer.
 
-## Quick Start
+## Verified Installation And Rollback
 
 ### Install The Published v1.0.9 App
 
@@ -101,6 +93,8 @@ The published v1.0.9 app supports macOS 15 and later on Apple silicon. The verif
 Download the app and checksum from the [v1.0.9 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.9), then verify the ZIP before opening it. The expected ZIP SHA-256 is `e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273`.
 
 ```bash
+set -euo pipefail
+
 version=1.0.9
 expected_sha=e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273
 release_dir="$HOME/Downloads/CodexPetLimitRings-v$version"
@@ -119,19 +113,36 @@ codesign --verify --deep --strict CodexPetLimitRings.app
 Back up an existing installation, stop its LaunchAgent, and replace it with the verified app:
 
 ```bash
+set -euo pipefail
+
 version=1.0.9
 release_dir="${release_dir:-$HOME/Downloads/CodexPetLimitRings-v$version}"
 backup="$HOME/Library/Application Support/CodexPetLimitRings/Backups/$(date +%Y%m%d-%H%M%S)"
 app="$HOME/Applications/CodexPetLimitRings.app"
 agent="$HOME/Library/LaunchAgents/com.codex-pet.limit-rings.plist"
+skill="${CODEX_HOME:-$HOME/.codex}/skills/codex-pet-limit-rings"
 gui="gui/$(id -u)"
+label="$gui/com.codex-pet.limit-rings"
 
 mkdir -p "$backup" "$HOME/Applications"
 if [[ -f "$agent" ]]; then
   cp -a "$agent" "$backup/com.codex-pet.limit-rings.plist"
 fi
-launchctl bootout "$gui" "$agent" >/dev/null 2>&1 || true
-pkill -TERM -f 'CodexPetLimitRings.app/Contents/MacOS/CodexPetLimitRings' >/dev/null 2>&1 || true
+if defaults read local.codex.pet-limit-rings >/dev/null 2>&1; then
+  defaults export local.codex.pet-limit-rings "$backup/preferences.plist" >/dev/null
+fi
+if [[ -d "$skill" ]]; then
+  ditto "$skill" "$backup/skill"
+fi
+if launchctl print "$label" >/dev/null 2>&1; then
+  launchctl bootout "$gui" "$agent" >/dev/null
+fi
+pkill_status=0
+pkill -TERM -f 'CodexPetLimitRings.app/Contents/MacOS/CodexPetLimitRings' \
+  >/dev/null 2>&1 || pkill_status=$?
+if ((pkill_status != 0 && pkill_status != 1)); then
+  exit "$pkill_status"
+fi
 if [[ -d "$app" ]]; then
   mv "$app" "$backup/CodexPetLimitRings.app"
 fi
@@ -148,6 +159,8 @@ printf 'Rollback backup: %s\n' "$backup"
 Verify the installed version and privacy-safe runtime diagnostics:
 
 ```bash
+set -euo pipefail
+
 plutil -extract CFBundleShortVersionString raw \
   "$HOME/Applications/CodexPetLimitRings.app/Contents/Info.plist"
 plutil -extract LSMinimumSystemVersion raw \
@@ -157,7 +170,7 @@ vtool -show-build \
 "$HOME/Applications/CodexPetLimitRings.app/Contents/MacOS/CodexPetLimitRings" --diagnose
 ```
 
-The release bundle is ad-hoc signed and not notarized. If macOS blocks the first launch, inspect the downloaded file and approve it from System Settings only after its SHA-256 and code signature pass the checks above. To restore the prior app and LaunchAgent, follow [docs/rollback.md](docs/rollback.md) using the backup directory printed by the commands above.
+The release bundle is ad-hoc signed and not notarized. If macOS blocks the first launch, inspect the downloaded file and approve it from System Settings only after its SHA-256 and code signature pass the checks above. To restore the prior app, LaunchAgent, preferences, and Skill, follow [docs/rollback.md](docs/rollback.md) using the backup directory printed by the commands above.
 
 ### Install From Source With Launch At Login
 
@@ -238,6 +251,7 @@ tools/
   test-limit-rings.sh              compile and run regression tests
   verify-release.sh                run the local and CI release gate
   package-release.sh               build a checked macOS arm64 release ZIP
+  verify-release-artifact.sh       apply the shared ZIP and app artifact gates
   smoke-release-artifact.sh        download and inspect a published release ZIP
 
 skills/codex-pet-limit-rings/
@@ -246,6 +260,7 @@ skills/codex-pet-limit-rings/
 docs/
   downstream-scope.md                upstream baseline and downstream boundary
   limit-rings.md                   implementation contract and data flow
+  maintenance-strategy.md           product boundary and update triggers
   rollback.md                      backup and rollback procedure
   release-checklist.md             publication evidence checklist
 
@@ -293,16 +308,20 @@ Build an ad-hoc-signed macOS arm64 ZIP and SHA-256 file under ignored `dist/`:
 tools/package-release.sh
 ```
 
-CI intentionally smoke-tests v1.0.0 as the long-term published compatibility baseline while building and testing the current source. The manual smoke commands below target the latest published v1.0.9 artifact without replacing the installed app:
+CI intentionally smoke-tests v1.0.0 as the long-term published compatibility baseline, including its pinned digest and compatibility checks, while building and testing the current source. Because that artifact predates the v1.0.4 build-path sanitization gate, only its local absolute-path scan has an explicit version-specific legacy exception; later artifacts do not inherit that exception. The manual smoke commands below target the latest published v1.0.9 artifact and require every current gate without replacing the installed app:
 
 ```bash
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.9
+EXPECTED_MIN_OS=15.0 \
+EXPECTED_SHA256=e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273 \
+  tools/smoke-release-artifact.sh 1.0.9
 ```
 
 On an older macOS host, perform checksum, signature, architecture, version, and deployment-target inspection without launching the binary:
 
 ```bash
-EXPECTED_MIN_OS=15.0 tools/smoke-release-artifact.sh 1.0.9 --inspect-only
+EXPECTED_MIN_OS=15.0 \
+EXPECTED_SHA256=e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273 \
+  tools/smoke-release-artifact.sh 1.0.9 --inspect-only
 ```
 
 ## Experiments
