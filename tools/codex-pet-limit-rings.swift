@@ -632,7 +632,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.10"
+    var version = "1.0.11"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -2126,11 +2126,51 @@ final class LimitStateReader {
 struct PetFramesTopLeft {
     var mascot: CGRect
     var overlay: CGRect
+    var interactiveControl: CGRect?
     var usedLiveOverlay: Bool
 }
 
 func isCodexPetMascotEffectWindowName(_ name: String?) -> Bool {
     name == "Codex Pet Mascot Effect"
+}
+
+func isCodexPetVoiceControlWindowName(_ name: String?) -> Bool {
+    name == "Codex Pet Voice Controls Backing"
+}
+
+func isOfficialCodexPetVoiceControlWindow(
+    name: String?,
+    ownerPID: pid_t?,
+    officialCodexPIDs: Set<pid_t>,
+    layer: CGFloat,
+    bounds: CGRect,
+    mascotEffectBounds: CGRect
+) -> Bool {
+    guard let ownerPID,
+          officialCodexPIDs.contains(ownerPID),
+          layer == 3,
+          bounds.width > 0,
+          bounds.width <= min(120, mascotEffectBounds.width * 0.8),
+          bounds.height > 0,
+          bounds.height <= 48,
+          bounds.intersects(mascotEffectBounds),
+          abs(bounds.midX - mascotEffectBounds.midX) <= max(12, mascotEffectBounds.width * 0.12),
+          bounds.midY >= mascotEffectBounds.midY + mascotEffectBounds.height * 0.15,
+          bounds.midY <= mascotEffectBounds.maxY + 8 else {
+        return false
+    }
+
+    if let name, !name.isEmpty {
+        return isCodexPetVoiceControlWindowName(name)
+            && bounds.width >= 12
+            && bounds.height >= 4
+    }
+
+    // Window names may be redacted without Screen Recording permission. The
+    // narrow, centered layer-three control at the bottom of the already
+    // verified mascot-effect surface is sufficiently specific to keep this
+    // fallback permission-free without accepting activity cards or app windows.
+    return bounds.width >= 36 && bounds.height >= 16
 }
 
 func isOfficialCodexPetMascotEffectWindow(
@@ -2165,15 +2205,18 @@ final class PetFrameReader {
     private let globalStatePath: URL
     private let liveOverlayProvider: ((CGRect, CGSize) -> CGRect?)?
     private let liveMascotEffectProvider: ((CGRect) -> CGRect?)?
+    private let liveInteractiveControlProvider: ((CGRect) -> CGRect?)?
 
     init(
         globalStatePath: URL,
         liveOverlayProvider: ((CGRect, CGSize) -> CGRect?)? = nil,
-        liveMascotEffectProvider: ((CGRect) -> CGRect?)? = nil
+        liveMascotEffectProvider: ((CGRect) -> CGRect?)? = nil,
+        liveInteractiveControlProvider: ((CGRect) -> CGRect?)? = nil
     ) {
         self.globalStatePath = globalStatePath
         self.liveOverlayProvider = liveOverlayProvider
         self.liveMascotEffectProvider = liveMascotEffectProvider
+        self.liveInteractiveControlProvider = liveInteractiveControlProvider
     }
 
     func readPetFramesTopLeft(
@@ -2246,7 +2289,7 @@ final class PetFrameReader {
             width: mascotSize.width,
             height: mascotSize.height
         )
-        return PetFramesTopLeft(mascot: mascot, overlay: overlay, usedLiveOverlay: liveOverlay != nil)
+        return PetFramesTopLeft(mascot: mascot, overlay: overlay, interactiveControl: nil, usedLiveOverlay: liveOverlay != nil)
     }
 
     private func readModernPetFramesTopLeft(
@@ -2282,7 +2325,14 @@ final class PetFrameReader {
         guard let liveEffect else {
             guard let historicalSize else { return nil }
             let mascot = CGRect(origin: persistedMascotOrigin, size: historicalSize)
-            return PetFramesTopLeft(mascot: mascot, overlay: mascot, usedLiveOverlay: false)
+            return PetFramesTopLeft(mascot: mascot, overlay: mascot, interactiveControl: nil, usedLiveOverlay: false)
+        }
+
+        let interactiveControl: CGRect?
+        if let liveInteractiveControlProvider {
+            interactiveControl = liveInteractiveControlProvider(liveEffect)
+        } else {
+            interactiveControl = liveCodexPetVoiceControlBounds(matching: liveEffect)
         }
 
         let derivedSize = modernMascotSize(
@@ -2297,7 +2347,12 @@ final class PetFrameReader {
             width: mascotSize.width,
             height: mascotSize.height
         )
-        return PetFramesTopLeft(mascot: mascot, overlay: liveEffect, usedLiveOverlay: true)
+        return PetFramesTopLeft(
+            mascot: mascot,
+            overlay: liveEffect,
+            interactiveControl: interactiveControl,
+            usedLiveOverlay: true
+        )
     }
 
     func readPetFrameTopLeft(preferLiveOverlay: Bool = false, requireLiveOverlay: Bool = false) -> CGRect? {
@@ -2440,6 +2495,40 @@ final class PetFrameReader {
         .min { distanceSquared($0.center, to: reference) < distanceSquared($1.center, to: reference) }
     }
 
+    private func liveCodexPetVoiceControlBounds(matching mascotEffectBounds: CGRect) -> CGRect? {
+        let options = CGWindowListOption(arrayLiteral: .optionOnScreenOnly, .excludeDesktopElements)
+        guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+        let officialCodexPIDs = Set(
+            NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex")
+                .map(\.processIdentifier)
+        )
+
+        return windows.compactMap { window -> CGRect? in
+            let ownerPID = (window[kCGWindowOwnerPID as String] as? NSNumber).map { pid_t($0.int32Value) }
+            guard let layer = number(window[kCGWindowLayer as String]),
+                  let payload = window[kCGWindowBounds as String] as? [String: Any],
+                  let x = number(payload["X"]),
+                  let y = number(payload["Y"]),
+                  let width = number(payload["Width"]),
+                  let height = number(payload["Height"]) else {
+                return nil
+            }
+            let bounds = CGRect(x: x, y: y, width: width, height: height)
+            guard isOfficialCodexPetVoiceControlWindow(
+                name: window[kCGWindowName as String] as? String,
+                ownerPID: ownerPID,
+                officialCodexPIDs: officialCodexPIDs,
+                layer: layer,
+                bounds: bounds,
+                mascotEffectBounds: mascotEffectBounds
+            ) else { return nil }
+            return bounds
+        }
+        .min { distanceSquared($0.center, to: mascotEffectBounds) < distanceSquared($1.center, to: mascotEffectBounds) }
+    }
+
     private func liveCodexOverlayBounds(matching reference: CGRect, expectedSize: CGSize) -> CGRect? {
         let options = CGWindowListOption(arrayLiteral: .optionOnScreenOnly, .excludeDesktopElements)
         guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
@@ -2503,6 +2592,97 @@ private extension CGRect {
     var center: CGPoint { CGPoint(x: midX, y: midY) }
 }
 
+func relocatedRect(
+    _ rect: CGRect,
+    avoiding exclusion: CGRect,
+    inside bounds: CGRect,
+    gap: CGFloat = 5
+) -> CGRect {
+    func clamped(_ candidate: CGRect) -> CGRect {
+        var result = candidate
+        let inset = bounds.insetBy(dx: 4, dy: 4)
+        result.origin.x = min(max(result.minX, inset.minX), inset.maxX - result.width)
+        result.origin.y = min(max(result.minY, inset.minY), inset.maxY - result.height)
+        return result
+    }
+
+    let original = clamped(rect)
+    guard original.intersects(exclusion) else { return original }
+    let candidates = [
+        CGRect(x: exclusion.minX - gap - rect.width, y: rect.minY, width: rect.width, height: rect.height),
+        CGRect(x: exclusion.maxX + gap, y: rect.minY, width: rect.width, height: rect.height),
+        CGRect(x: rect.minX, y: exclusion.maxY + gap, width: rect.width, height: rect.height),
+        CGRect(x: rect.minX, y: exclusion.minY - gap - rect.height, width: rect.width, height: rect.height)
+    ]
+    .map(clamped)
+    .filter { !$0.intersects(exclusion) }
+
+    return candidates.min {
+        distanceSquared($0.center, original.center) < distanceSquared($1.center, original.center)
+    } ?? original
+}
+
+private func distanceSquared(_ lhs: CGPoint, _ rhs: CGPoint) -> CGFloat {
+    let dx = lhs.x - rhs.x
+    let dy = lhs.y - rhs.y
+    return dx * dx + dy * dy
+}
+
+let petInteractiveControlMinimumHitSize = CGSize(width: 44, height: 24)
+
+func effectivePetInteractiveControlFrame(
+    _ controlFrame: CGRect?,
+    minimumSize: CGSize = petInteractiveControlMinimumHitSize
+) -> CGRect? {
+    guard let controlFrame,
+          controlFrame.width > 0,
+          controlFrame.height > 0 else {
+        return nil
+    }
+    let width = max(controlFrame.width, minimumSize.width)
+    let height = max(controlFrame.height, minimumSize.height)
+    return CGRect(
+        x: controlFrame.midX - width / 2,
+        y: controlFrame.midY - height / 2,
+        width: width,
+        height: height
+    )
+}
+
+func translatedPetInteractiveControlFrame(
+    _ controlFrame: CGRect?,
+    from previousOverlayFrame: CGRect?,
+    to nextOverlayFrame: CGRect?
+) -> CGRect? {
+    guard let controlFrame,
+          let previousOverlayFrame,
+          let nextOverlayFrame else {
+        return controlFrame
+    }
+    return controlFrame.offsetBy(
+        dx: nextOverlayFrame.minX - previousOverlayFrame.minX,
+        dy: nextOverlayFrame.minY - previousOverlayFrame.minY
+    )
+}
+
+func localInteractiveExclusionRect(
+    panelFrame: CGRect,
+    controlFrame: CGRect?,
+    clearance: CGFloat = 6
+) -> CGRect? {
+    guard let controlFrame = effectivePetInteractiveControlFrame(controlFrame) else { return nil }
+    let local = controlFrame.offsetBy(dx: -panelFrame.minX, dy: -panelFrame.minY)
+        .insetBy(dx: -clearance, dy: -clearance)
+    let bounds = CGRect(origin: .zero, size: panelFrame.size)
+    let intersection = local.intersection(bounds)
+    return intersection.isNull || intersection.isEmpty ? nil : intersection
+}
+
+func pointIsInsidePetInteractiveControl(_ point: CGPoint, controlFrame: CGRect?, clearance: CGFloat = 6) -> Bool {
+    guard let controlFrame = effectivePetInteractiveControlFrame(controlFrame) else { return false }
+    return controlFrame.insetBy(dx: -clearance, dy: -clearance).contains(point)
+}
+
 struct AccessibilityPresentation {
     var reduceMotion: Bool
     var increaseContrast: Bool
@@ -2525,6 +2705,7 @@ struct LimitRingRenderer {
     var phase: Double
     var showsReadout: Bool = false
     var fullSnapshotFreshness: DataFreshnessState = .current
+    var interactiveExclusionRect: CGRect? = nil
     var accessibility: AccessibilityPresentation = .standard
 
     func draw(in rect: CGRect) {
@@ -2542,7 +2723,6 @@ struct LimitRingRenderer {
         let pulse = accessibility.reduceMotion ? CGFloat(1.0) : CGFloat(1.0 + urgency * 0.025 * breathe)
         let outerRadius = (minSide * 0.5 - 16.0) * pulse
         let innerRadius = outerRadius - 13.0
-
         drawHalo(context, center: center, radius: outerRadius, urgency: CGFloat(urgency), breathe: breathe)
         drawTicks(context, center: center, radius: outerRadius + 5.0)
 
@@ -2578,7 +2758,15 @@ struct LimitRingRenderer {
 
         drawModelLimitDots(context, center: center, radius: outerRadius + 11.0, state: state)
         if showsReadout {
-            drawLimitReadouts(context, center: center, outerRadius: outerRadius, innerRadius: innerRadius, bounds: rect, isStale: isStale)
+            drawLimitReadouts(
+                context,
+                center: center,
+                outerRadius: outerRadius,
+                innerRadius: innerRadius,
+                bounds: rect,
+                isStale: isStale,
+                interactiveExclusionRect: interactiveExclusionRect
+            )
         }
         if isStale {
             drawStaleIndicator(context, center: center, radius: outerRadius)
@@ -2699,7 +2887,15 @@ struct LimitRingRenderer {
         context.restoreGState()
     }
 
-    private func drawLimitReadouts(_ context: CGContext, center: CGPoint, outerRadius: CGFloat, innerRadius: CGFloat, bounds: CGRect, isStale: Bool) {
+    private func drawLimitReadouts(
+        _ context: CGContext,
+        center: CGPoint,
+        outerRadius: CGFloat,
+        innerRadius: CGFloat,
+        bounds: CGRect,
+        isStale: Bool,
+        interactiveExclusionRect: CGRect?
+    ) {
         var readouts: [LimitReadout] = []
         let staleLabel = localized("ring.stale", fallback: "Stale")
         if let primary = state.primary {
@@ -2726,6 +2922,16 @@ struct LimitRingRenderer {
                 color: color(forRemaining: secondary.remainingPercent, role: .secondary),
                 bounds: bounds
             ))
+        }
+
+        if let interactiveExclusionRect {
+            for index in readouts.indices {
+                readouts[index].labelRect = relocatedRect(
+                    readouts[index].labelRect,
+                    avoiding: interactiveExclusionRect,
+                    inside: bounds
+                )
+            }
         }
 
         for readout in resolveReadoutOverlaps(readouts, bounds: bounds) {
@@ -2990,6 +3196,9 @@ final class LimitRingView: NSView {
     var fullSnapshotFreshness: DataFreshnessState = .waiting {
         didSet { needsDisplay = true }
     }
+    var interactiveExclusionRect: CGRect? {
+        didSet { needsDisplay = true }
+    }
 
     override var isOpaque: Bool { false }
 
@@ -2999,6 +3208,7 @@ final class LimitRingView: NSView {
             phase: phase,
             showsReadout: showsReadout,
             fullSnapshotFreshness: fullSnapshotFreshness,
+            interactiveExclusionRect: interactiveExclusionRect,
             accessibility: .current
         ).draw(in: bounds)
     }
@@ -3043,6 +3253,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private var currentPetFrameAppKit: CGRect?
     private var currentPetOverlayTopLeft: CGRect?
     private var currentPetOverlayFrameAppKit: CGRect?
+    private var currentPetInteractiveControlFrameAppKit: CGRect?
     private var isTrackingMouseDrag = false
     private var dragMouseToPetOriginOffsetAppKit: CGPoint?
     private var dragMouseToOverlayOriginOffsetAppKit: CGPoint?
@@ -3443,11 +3654,13 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             currentPetFrameAppKit = nil
             currentPetOverlayTopLeft = nil
             currentPetOverlayFrameAppKit = nil
+            currentPetInteractiveControlFrameAppKit = nil
             isTrackingMouseDrag = false
             dragMouseToPetOriginOffsetAppKit = nil
             dragMouseToOverlayOriginOffsetAppKit = nil
             stopDragFollowTimer()
             ringView.showsReadout = false
+            ringView.interactiveExclusionRect = nil
             panel.orderOut(nil)
             return
         }
@@ -3466,10 +3679,19 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         currentPetFrameAppKit = appKitRectFromTopLeft(petFrames.mascot)
         currentPetOverlayTopLeft = petFrames.overlay
         currentPetOverlayFrameAppKit = appKitRectFromTopLeft(petFrames.overlay)
+        currentPetInteractiveControlFrameAppKit = petFrames.interactiveControl.map(appKitRectFromTopLeft)
         setPanelFrame(forPetFrameTopLeft: petFrames.mascot)
+        updateInteractiveControlClearance()
         if ringsVisible {
             panel.orderFrontRegardless()
         }
+    }
+
+    private func updateInteractiveControlClearance() {
+        ringView.interactiveExclusionRect = localInteractiveExclusionRect(
+            panelFrame: panel.frame,
+            controlFrame: currentPetInteractiveControlFrameAppKit
+        )
     }
 
     private func setPanelFrame(forPetFrameTopLeft petFrame: CGRect) {
@@ -4294,6 +4516,10 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private func beginDragFollowIfNeeded(at mouse: CGPoint) {
         guard ringsVisible else { return }
         updateFrame()
+        guard !pointIsInsidePetInteractiveControl(mouse, controlFrame: currentPetInteractiveControlFrameAppKit) else {
+            ringView.showsReadout = false
+            return
+        }
         guard isLikelyPetDragStart(at: mouse) else { return }
         guard let petFrame = currentPetFrameAppKit,
               let overlayFrame = currentPetOverlayFrameAppKit else { return }
@@ -4397,12 +4623,20 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     }
 
     private func applyPredictedDragFrame(petFrame: CGRect, overlayFrame: CGRect?) {
+        let previousOverlayFrame = currentPetOverlayFrameAppKit
+        let previousControlFrame = currentPetInteractiveControlFrameAppKit
         currentPetFrameAppKit = petFrame
         if let overlayFrame {
             currentPetOverlayFrameAppKit = overlayFrame
             currentPetOverlayTopLeft = topLeftRectFromAppKit(overlayFrame)
+            currentPetInteractiveControlFrameAppKit = translatedPetInteractiveControlFrame(
+                previousControlFrame,
+                from: previousOverlayFrame,
+                to: overlayFrame
+            )
         }
         setPanelFrame(forPetFrameAppKit: petFrame)
+        updateInteractiveControlClearance()
         if ringsVisible {
             panel.orderFrontRegardless()
         }
@@ -4441,6 +4675,11 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func updateTooltip(at mouse: CGPoint) {
         if !ringsVisible || currentPetFrameAppKit == nil || isTrackingMouseDrag {
+            ringView.showsReadout = false
+            return
+        }
+
+        if pointIsInsidePetInteractiveControl(mouse, controlFrame: currentPetInteractiveControlFrameAppKit) {
             ringView.showsReadout = false
             return
         }
@@ -4705,6 +4944,7 @@ private struct CompatibilityDiagnostics: Encodable {
     var globalStateExists: Bool
     var avatarOverlayOpen: Bool?
     var petFrameReadable: Bool
+    var petInteractiveControlDetected: Bool
     var primaryLimitAvailable: Bool
     var secondaryLimitAvailable: Bool
     var additionalLimitCount: Int
@@ -4739,6 +4979,8 @@ func runDiagnostics(config: LimitRingsConfig) -> Bool {
     }
 
     let accessibility = AccessibilityPresentation.current
+    let petFrames = PetFrameReader(globalStatePath: config.globalStatePath)
+        .readPetFramesTopLeft(requireLiveOverlay: true)
     let diagnostics = CompatibilityDiagnostics(
         appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development",
         codexAppRunning: runningCodex != nil,
@@ -4758,8 +5000,8 @@ func runDiagnostics(config: LimitRingsConfig) -> Bool {
         ).rawValue,
         globalStateExists: stateData != nil,
         avatarOverlayOpen: avatarOpen,
-        petFrameReadable: PetFrameReader(globalStatePath: config.globalStatePath)
-            .readPetFrameTopLeft(requireLiveOverlay: true) != nil,
+        petFrameReadable: petFrames != nil,
+        petInteractiveControlDetected: petFrames?.interactiveControl != nil,
         primaryLimitAvailable: probe.state?.primary != nil,
         secondaryLimitAvailable: probe.state?.secondary != nil,
         additionalLimitCount: probe.state?.additional.count ?? 0,
