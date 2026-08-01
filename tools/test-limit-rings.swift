@@ -21,6 +21,7 @@ struct LimitRingsTests {
             try testModernPetSurfaceSchemaRequiresNamedLiveWindow()
             try testModernPetSurfaceDerivesMascotSizeWithoutHistory()
             try testModernPetSurfaceTracksRuntimeSizeChanges()
+            try testPetVoiceControlClearance()
             try testCodexApplicationVisibilityGate()
             try testCodexApplicationLifecycleRefreshGate()
             try testPetDragLiveMismatchGate()
@@ -474,6 +475,197 @@ struct LimitRingsTests {
         )
     }
 
+    private static func testPetVoiceControlClearance() throws {
+        let officialPID: pid_t = 123
+        let effect = CGRect(x: 3_534, y: 772, width: 172, height: 179)
+        let control = CGRect(x: 3_592, y: 909, width: 56, height: 24)
+        let compactControl = CGRect(x: 3_611.5, y: 927, width: 17, height: 6)
+
+        try expect(
+            isOfficialCodexPetVoiceControlWindow(
+                name: "Codex Pet Voice Controls Backing",
+                ownerPID: officialPID,
+                officialCodexPIDs: [officialPID],
+                layer: 3,
+                bounds: control,
+                mascotEffectBounds: effect
+            ),
+            "expected the current named bottom pet control from the official app"
+        )
+        try expect(
+            isOfficialCodexPetVoiceControlWindow(
+                name: nil,
+                ownerPID: officialPID,
+                officialCodexPIDs: [officialPID],
+                layer: 3,
+                bounds: control,
+                mascotEffectBounds: effect
+            ),
+            "expected the permission-free geometry fallback to accept the redacted bottom control"
+        )
+        try expect(
+            isOfficialCodexPetVoiceControlWindow(
+                name: "Codex Pet Voice Controls Backing",
+                ownerPID: officialPID,
+                officialCodexPIDs: [officialPID],
+                layer: 3,
+                bounds: compactControl,
+                mascotEffectBounds: effect
+            ),
+            "expected the exact named compact bottom control from the official app"
+        )
+        try expect(
+            !isOfficialCodexPetVoiceControlWindow(
+                name: nil,
+                ownerPID: officialPID,
+                officialCodexPIDs: [officialPID],
+                layer: 3,
+                bounds: compactControl,
+                mascotEffectBounds: effect
+            ),
+            "expected the redacted fallback to retain its stricter normal-size geometry"
+        )
+        try expect(
+            !isOfficialCodexPetVoiceControlWindow(
+                name: "Codex Pet Voice Controls Backing",
+                ownerPID: officialPID,
+                officialCodexPIDs: [officialPID],
+                layer: 3,
+                bounds: CGRect(x: compactControl.midX - 0.5, y: compactControl.midY - 0.5, width: 1, height: 1),
+                mascotEffectBounds: effect
+            ),
+            "expected degenerate named geometry to remain excluded"
+        )
+        try expect(
+            !isOfficialCodexPetVoiceControlWindow(
+                name: "Codex Pet Voice Controls Glass",
+                ownerPID: officialPID,
+                officialCodexPIDs: [officialPID],
+                layer: 3,
+                bounds: CGRect(x: 3_310, y: 754, width: 512, height: 223),
+                mascotEffectBounds: effect
+            ),
+            "expected the large voice glass surface not to erase the rings"
+        )
+        try expect(
+            !isOfficialCodexPetVoiceControlWindow(
+                name: "Codex Pet Activity Stack Backing",
+                ownerPID: officialPID,
+                officialCodexPIDs: [officialPID],
+                layer: 3,
+                bounds: CGRect(x: 3_448, y: 734, width: 345, height: 73),
+                mascotEffectBounds: effect
+            ),
+            "expected activity cards above the pet not to be treated as the bottom control"
+        )
+        try expect(
+            !isOfficialCodexPetVoiceControlWindow(
+                name: "Codex Pet Voice Controls Backing",
+                ownerPID: 456,
+                officialCodexPIDs: [officialPID],
+                layer: 3,
+                bounds: control,
+                mascotEffectBounds: effect
+            ),
+            "expected an identically named third-party window to remain excluded"
+        )
+
+        let panel = CGRect(x: 3_539.5, y: 138, width: 161, height: 161)
+        let controlAppKit = CGRect(x: 3_592, y: 147, width: 56, height: 24)
+        guard let exclusion = localInteractiveExclusionRect(panelFrame: panel, controlFrame: controlAppKit) else {
+            throw LimitRingsTestError.failed("expected the on-panel control to produce a local exclusion")
+        }
+        try expect(exclusion.contains(CGPoint(x: 80.5, y: 21)), "expected the expanded exclusion to cover the control center")
+        try expect(
+            pointIsInsidePetInteractiveControl(CGPoint(x: 3_620, y: 159), controlFrame: controlAppKit),
+            "expected clicking the bottom control not to start pet drag tracking"
+        )
+        let compactControlAppKit = CGRect(x: 3_611.5, y: 147, width: 17, height: 6)
+        guard let effectiveCompactControl = effectivePetInteractiveControlFrame(compactControlAppKit) else {
+            throw LimitRingsTestError.failed("expected compact control geometry to produce an effective hit target")
+        }
+        try expect(
+            effectiveCompactControl.size == petInteractiveControlMinimumHitSize,
+            "expected compact control geometry to normalize to the minimum hit target"
+        )
+        try expect(
+            effectiveCompactControl.midX == compactControlAppKit.midX
+                && effectiveCompactControl.midY == compactControlAppKit.midY,
+            "expected compact control normalization to preserve its live center"
+        )
+        try expect(
+            pointIsInsidePetInteractiveControl(
+                CGPoint(x: compactControlAppKit.midX + 15, y: compactControlAppKit.midY),
+                controlFrame: compactControlAppKit,
+                clearance: 0
+            ),
+            "expected the normalized compact hit target to suppress drag beyond the raw six-pixel surface"
+        )
+        try expect(
+            !pointIsInsidePetInteractiveControl(
+                CGPoint(x: compactControlAppKit.midX + 30, y: compactControlAppKit.midY),
+                controlFrame: compactControlAppKit,
+                clearance: 0
+            ),
+            "expected points outside the bounded compact hit target to remain available for pet dragging"
+        )
+        guard let compactExclusion = localInteractiveExclusionRect(
+            panelFrame: panel,
+            controlFrame: compactControlAppKit
+        ) else {
+            throw LimitRingsTestError.failed("expected the compact control to produce a local exclusion")
+        }
+        try expect(
+            compactExclusion.width >= 56 && compactExclusion.height >= 24,
+            "expected the on-panel compact exclusion to retain the minimum hit target after clipping"
+        )
+        let readout = CGRect(x: 58, y: 4, width: 45, height: 34)
+        let relocated = relocatedRect(readout, avoiding: exclusion, inside: CGRect(origin: .zero, size: panel.size))
+        try expect(!relocated.intersects(exclusion), "expected a bottom readout to move away from the interactive control")
+
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 161,
+            pixelsHigh: 161,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ), let graphics = NSGraphicsContext(bitmapImageRep: bitmap) else {
+            throw LimitRingsTestError.failed("expected a bitmap graphics context for control-clearance rendering")
+        }
+        let state = LimitState(
+            planType: "pro",
+            primary: LimitBucket(usedPercent: 0, windowMinutes: 300, resetAt: nil),
+            secondary: LimitBucket(usedPercent: 0, windowMinutes: 10_080, resetAt: nil),
+            additional: [],
+            observedAt: Date(),
+            source: "app-server"
+        )
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = graphics
+        LimitRingRenderer(
+            state: state,
+            phase: 0,
+            showsReadout: true,
+            interactiveExclusionRect: exclusion,
+            accessibility: .standard
+        ).draw(in: CGRect(x: 0, y: 0, width: 161, height: 161))
+        graphics.flushGraphics()
+        NSGraphicsContext.restoreGraphicsState()
+
+        let circularRingSample = bitmap.colorAt(
+            x: Int(exclusion.midX),
+            y: bitmap.pixelsHigh - 1 - Int(exclusion.midY)
+        )?.alphaComponent ?? 0
+        let visibleRingSample = bitmap.colorAt(x: 80, y: bitmap.pixelsHigh - 1 - 145)?.alphaComponent ?? 0
+        try expect(circularRingSample > 0, "expected the click-through ring to remain visually circular across the control")
+        try expect(visibleRingSample > 0, "expected the rest of the ring to remain visible")
+    }
+
     private static func testPetDragLiveMismatchGate() throws {
         let predicted = CGRect(x: 100, y: 100, width: 64, height: 64)
         let nearbyLive = CGRect(x: 120, y: 110, width: 64, height: 64)
@@ -485,6 +677,29 @@ struct LimitRingsTests {
         try expect(
             !petDragLiveFrameIsClose(distantLive, to: predicted),
             "expected an unrelated live window to fail the drag mismatch gate"
+        )
+
+        let previousOverlay = CGRect(x: 80, y: 70, width: 180, height: 190)
+        let nextOverlay = previousOverlay.offsetBy(dx: 45, dy: -30)
+        let compactControl = CGRect(x: 161.5, y: 82, width: 17, height: 6)
+        guard let translatedControl = translatedPetInteractiveControlFrame(
+            compactControl,
+            from: previousOverlay,
+            to: nextOverlay
+        ) else {
+            throw LimitRingsTestError.failed("expected compact control geometry to follow predicted pet drag")
+        }
+        try expect(
+            translatedControl == compactControl.offsetBy(dx: 45, dy: -30),
+            "expected drag tracking to translate compact control geometry without resizing it"
+        )
+        guard let effectiveTranslatedControl = effectivePetInteractiveControlFrame(translatedControl) else {
+            throw LimitRingsTestError.failed("expected translated compact geometry to keep an effective hit target")
+        }
+        try expect(
+            effectiveTranslatedControl.midX == compactControl.midX + 45
+                && effectiveTranslatedControl.midY == compactControl.midY - 30,
+            "expected the normalized compact hit target to stay centered during predicted drag"
         )
     }
 
