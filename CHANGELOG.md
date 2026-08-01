@@ -4,6 +4,8 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
+## 1.0.11 - 2026-08-01
+
 ### Pet Controls Clearance
 
 - Detect both the normal and contracted forms of ChatGPT's bottom pet control using the official process, exact window name, layer, and tightly bounded geometry only; keep the redacted-name fallback on its stricter normal-size bounds.

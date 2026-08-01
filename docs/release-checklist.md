@@ -24,12 +24,12 @@ Build the release package and checksum:
 tools/package-release.sh
 ```
 
-Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The published v1.0.10 package is ad-hoc signed and not notarized. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, confirm English and Japanese localization resources are present, and confirm the re-extracted binary contains no local build-machine path.
+Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The published v1.0.11 package is ad-hoc signed and not notarized. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, confirm English and Japanese localization resources are present, and confirm the re-extracted binary contains no local build-machine path.
 
 The packaging command verifies its checksum before returning. To repeat that check manually, run it from `dist/` so the relative archive name resolves:
 
 ```bash
-(cd dist && shasum -a 256 -c CodexPetLimitRings-v1.0.10-macos-arm64.zip.sha256)
+(cd dist && shasum -a 256 -c CodexPetLimitRings-v1.0.11-macos-arm64.zip.sha256)
 ```
 
 ## Runtime Gate
@@ -51,6 +51,24 @@ Confirm the menu-bar source is `App Server`, `Cached`, or `Local`, full limit de
 - Confirm no local paths, logs, state files, screenshots with private content, or `tmp/` artifacts are included.
 - Create the fork, push, upstream PR, and downstream release as separate operations.
 - Record the fork URL, commit/tag, CI result, PR URL/status, and known limitations.
+
+### Published v1.0.11 Evidence
+
+- Release commit and target: `7df5bba91e1f1c5805da463164edc71aa995c7b4`.
+- Tag and Release: [`v1.0.11`](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.11).
+- Release ZIP SHA-256: `7bb566878c8fa4e841ea504b4d09d5bdd551faeb7809a2ca68042706a161d439`.
+- Packaged architecture: Apple silicon `arm64`.
+- Packaged minimum OS: macOS `15.0` in both `LSMinimumSystemVersion` and the Mach-O build command.
+- Signing status: ad-hoc signed and not notarized.
+- Merge-commit CI passed on macOS 15 and macOS 26 (`https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/30689482025`).
+- Unit tests covered normal and contracted pet voice controls, strict redacted-name fallback, normalized interaction targets, circular mouse-through rings, drag mismatch, lifecycle visibility, size tracking, and multi-display positioning; live observation confirmed both normal and contracted control geometry and button access.
+- The published artifact smoke test passed checksum, archive allowlisting, local-path sanitization, signature, architecture, version, deployment-target, English/Japanese resources, preview-execution, and privacy-safe diagnostic checks:
+
+```bash
+EXPECTED_MIN_OS=15.0 \
+EXPECTED_SHA256=7bb566878c8fa4e841ea504b4d09d5bdd551faeb7809a2ca68042706a161d439 \
+  tools/smoke-release-artifact.sh 1.0.11
+```
 
 ### Published v1.0.10 Evidence
 
