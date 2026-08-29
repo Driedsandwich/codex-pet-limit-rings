@@ -4,6 +4,12 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
+### Oversized Pet Alignment
+
+- Align the modern oversized avatar surface from the saved pet origin plus ChatGPT's bounded desktop pet-width setting and current 192-by-208 pet canvas ratio, instead of assuming the giant transparent surface shares the visible pet center.
+- Cache the read-only desktop size setting by device, inode, size, and nanosecond modification time, and retain the v1.0.12 live-center reconstruction when the setting is absent or invalid.
+- Keep the oversized window as identity evidence only while preserving strict surface rejection, pet-only mouse and drag hit testing, lifecycle visibility, controls, multiple displays, and permission-free privacy boundaries.
+
 ## 1.0.12 - 2026-08-29
 
 ### Performance And Current Pet Surface Compatibility

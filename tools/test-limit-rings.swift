@@ -20,6 +20,7 @@ struct LimitRingsTests {
             try testPetLifecycleRequiresLiveOverlay()
             try testModernPetSurfaceSchemaRequiresNamedLiveWindow()
             try testLayerThreeDirectPetSurfaceCompatibility()
+            try testDesktopPetSizeContract()
             try testOversizedAvatarOverlayCompatibility()
             try testPetStateSnapshotCacheAndMouseDownGate()
             try testRingAnimationVisibilityGate()
@@ -505,6 +506,7 @@ struct LimitRingsTests {
         let root = try temporaryDirectory(named: "oversized-avatar-overlay")
         defer { try? FileManager.default.removeItem(at: root) }
         let stateURL = root.appendingPathComponent(".codex-global-state.json")
+        let configURL = root.appendingPathComponent("config.toml")
         let display = CGRect(x: 1_920, y: 0, width: 1_920, height: 1_080)
         let origin = CGPoint(x: 2_005, y: 908)
         let reference = CGRect(origin: origin, size: CGSize(width: 113, height: 122))
@@ -585,8 +587,13 @@ struct LimitRingsTests {
         }
 
         try writeState(open: true)
+        try """
+        [desktop]
+        avatar-overlay-mascot-width-px = 80
+        """.write(to: configURL, atomically: true, encoding: .utf8)
         let reader = PetFrameReader(
             globalStatePath: stateURL,
+            petSizeConfigPath: configURL,
             livePetSurfaceProvider: { _, _ in
                 LiveCodexPetSurface(bounds: oversizedOverlay, kind: .oversizedAvatarOverlay)
             }
@@ -594,8 +601,17 @@ struct LimitRingsTests {
         guard let frames = reader.readPetFramesTopLeft(requireLiveOverlay: true) else {
             throw LimitRingsTestError.failed("expected the oversized avatar overlay to restore a live pet frame")
         }
-        let expectedMascot = CGRect(x: 2_005, y: 908, width: 108, height: 87)
-        try expect(frames.mascot == expectedMascot, "expected the saved origin and live panel center to reconstruct the current pet")
+        let expectedMascot = CGRect(
+            x: 2_005,
+            y: 908,
+            width: 80,
+            height: 80 * codexPetCanvasHeight / codexPetCanvasWidth
+        )
+        try expect(frames.mascot == expectedMascot, "expected the saved origin and configured pet canvas to align the current pet")
+        try expect(
+            abs(frames.mascot.midX - oversizedOverlay.midX) == 14,
+            "expected the pet canvas center to remain independent from the oversized surface center"
+        )
         try expect(frames.overlay == expectedMascot, "expected mouse and drag tracking to use the pet rather than the giant Electron panel")
         try expect(
             !pointMayStartPetDrag(
@@ -606,11 +622,65 @@ struct LimitRingsTests {
             ),
             "expected an unrelated click inside the giant Electron panel to stay outside the cached pet hit target"
         )
+        try expect(reader.petSizeConfigParseCountForTesting == 1, "expected one initial desktop pet-size parse")
+        _ = reader.readPetFramesTopLeft(requireLiveOverlay: true)
+        try expect(reader.petSizeConfigParseCountForTesting == 1, "expected unchanged desktop config to stay cached")
+
+        let fallbackReader = PetFrameReader(
+            globalStatePath: stateURL,
+            livePetSurfaceProvider: { _, _ in
+                LiveCodexPetSurface(bounds: oversizedOverlay, kind: .oversizedAvatarOverlay)
+            }
+        )
+        let legacyFallback = fallbackReader.readPetFramesTopLeft(requireLiveOverlay: true)
+        try expect(
+            legacyFallback?.mascot == CGRect(x: 2_005, y: 908, width: 108, height: 87),
+            "expected missing desktop config to preserve the bounded v1.0.12 reconstruction fallback"
+        )
+
+        try """
+        [desktop]
+        avatar-overlay-mascot-width-px = 112
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        guard let resizedFrames = reader.readPetFramesTopLeft(requireLiveOverlay: true) else {
+            throw LimitRingsTestError.failed("expected a changed desktop pet size to refresh")
+        }
+        try expect(resizedFrames.mascot.width == 112, "expected changed desktop pet width to apply")
+        try expect(reader.petSizeConfigParseCountForTesting == 2, "expected changed desktop config to parse once more")
 
         try writeState(open: false)
         try expect(
             reader.readPetFramesTopLeft(requireLiveOverlay: true) == nil,
             "expected closed avatar state to reject the otherwise matching oversized overlay"
+        )
+    }
+
+    private static func testDesktopPetSizeContract() throws {
+        let size = codexDesktopPetSize(fromTOML: """
+        [features]
+        avatar-overlay-mascot-width-px = 224
+
+        [desktop]
+        avatar-overlay-mascot-width-px = 80 # current minimum size
+        """)
+        try expect(size?.width == 80, "expected only the desktop pet-size setting")
+        try expect(
+            abs((size?.height ?? 0) - (80 * codexPetCanvasHeight / codexPetCanvasWidth)) < 0.001,
+            "expected the current 192-by-208 pet canvas aspect ratio"
+        )
+        try expect(
+            codexDesktopPetSize(fromTOML: "[desktop]\navatar-overlay-mascot-width-px = 224")?.width == 224,
+            "expected the current maximum size"
+        )
+        for invalid in ["79", "225", "80.5", "\"80\"", "nan"] {
+            try expect(
+                codexDesktopPetSize(fromTOML: "[desktop]\navatar-overlay-mascot-width-px = \(invalid)") == nil,
+                "expected invalid or out-of-range desktop pet size to fail closed"
+            )
+        }
+        try expect(
+            codexDesktopPetSize(fromTOML: "[other]\navatar-overlay-mascot-width-px = 80") == nil,
+            "expected the same key outside the desktop table to be ignored"
         )
     }
 
