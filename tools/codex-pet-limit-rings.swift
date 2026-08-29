@@ -95,6 +95,7 @@ private let petFrameFallbackPollInterval: TimeInterval = 2.0
 private let petFrameStateDebounceInterval: TimeInterval = 0.035
 private let petFrameApplicationLaunchGraceInterval: TimeInterval = 0.35
 private let dragFollowInterval: TimeInterval = 1.0 / 60.0
+private let ringAnimationInterval: TimeInterval = 0.1
 let dragLiveMismatchTolerance: CGFloat = 96.0
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
 private let notificationsEnabledDefaultsKey = "CodexPetLimitRings.notificationsEnabled"
@@ -2886,6 +2887,14 @@ func pointMayStartPetDrag(
     return panelFrame.insetBy(dx: -4, dy: -4).contains(point)
 }
 
+func ringAnimationShouldRun(
+    ringsVisible: Bool,
+    hasLivePetFrame: Bool,
+    panelVisible: Bool
+) -> Bool {
+    ringsVisible && hasLivePetFrame && panelVisible
+}
+
 struct AccessibilityPresentation {
     var reduceMotion: Bool
     var increaseContrast: Bool
@@ -3456,7 +3465,6 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private var pendingPetStateRefresh = false
     private var pendingPetStatePreferLiveOverlay = false
     private var workspaceApplicationObservers: [NSObjectProtocol] = []
-    private var startTime = Date()
     private var currentPetFrameAppKit: CGRect?
     private var currentPetOverlayTopLeft: CGRect?
     private var currentPetOverlayFrameAppKit: CGRect?
@@ -3563,10 +3571,39 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             self?.requestDailyUsage()
         }
         installDragFollow()
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.ringView.phase = Date().timeIntervalSince(self.startTime) / 4.6
+    }
+
+    private func startAnimationIfNeeded() {
+        guard ringAnimationShouldRun(
+            ringsVisible: ringsVisible,
+            hasLivePetFrame: currentPetFrameAppKit != nil,
+            panelVisible: panel.isVisible
+        ) else {
+            stopAnimation()
+            return
         }
+        guard animationTimer == nil else { return }
+
+        ringView.phase = continuousUptime() / 4.6
+        let timer = Timer.scheduledTimer(withTimeInterval: ringAnimationInterval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            guard ringAnimationShouldRun(
+                ringsVisible: self.ringsVisible,
+                hasLivePetFrame: self.currentPetFrameAppKit != nil,
+                panelVisible: self.panel.isVisible
+            ) else {
+                self.stopAnimation()
+                return
+            }
+            self.ringView.phase = continuousUptime() / 4.6
+        }
+        timer.tolerance = ringAnimationInterval * 0.2
+        animationTimer = timer
+    }
+
+    private func stopAnimation() {
+        animationTimer?.invalidate()
+        animationTimer = nil
     }
 
     private func updateState() {
@@ -3891,6 +3928,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             stopDragFollowTimer()
             ringView.showsReadout = false
             ringView.interactiveExclusionRect = nil
+            stopAnimation()
             panel.orderOut(nil)
             return
         }
@@ -3914,6 +3952,9 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         updateInteractiveControlClearance()
         if ringsVisible {
             panel.orderFrontRegardless()
+            startAnimationIfNeeded()
+        } else {
+            stopAnimation()
         }
     }
 
@@ -4593,8 +4634,10 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         if ringsVisible, currentPetFrameAppKit != nil {
             panel.orderFrontRegardless()
             updateTooltip(at: NSEvent.mouseLocation)
+            startAnimationIfNeeded()
         } else {
             ringView.showsReadout = false
+            stopAnimation()
             panel.orderOut(nil)
         }
     }

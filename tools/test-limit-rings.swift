@@ -21,6 +21,7 @@ struct LimitRingsTests {
             try testModernPetSurfaceSchemaRequiresNamedLiveWindow()
             try testLayerThreeDirectPetSurfaceCompatibility()
             try testPetStateSnapshotCacheAndMouseDownGate()
+            try testRingAnimationVisibilityGate()
             try testModernPetSurfaceDerivesMascotSizeWithoutHistory()
             try testModernPetSurfaceTracksRuntimeSizeChanges()
             try testPetVoiceControlClearance()
@@ -569,6 +570,25 @@ struct LimitRingsTests {
                 panelFrame: panel
             ),
             "expected a cached pet hit to permit live geometry refresh"
+        )
+    }
+
+    private static func testRingAnimationVisibilityGate() throws {
+        try expect(
+            ringAnimationShouldRun(ringsVisible: true, hasLivePetFrame: true, panelVisible: true),
+            "expected animation only while the ring panel is effectively visible"
+        )
+        try expect(
+            !ringAnimationShouldRun(ringsVisible: false, hasLivePetFrame: true, panelVisible: true),
+            "expected hidden rings to stop animation"
+        )
+        try expect(
+            !ringAnimationShouldRun(ringsVisible: true, hasLivePetFrame: false, panelVisible: true),
+            "expected a missing pet to stop animation"
+        )
+        try expect(
+            !ringAnimationShouldRun(ringsVisible: true, hasLivePetFrame: true, panelVisible: false),
+            "expected an ordered-out or off-Space panel to stop animation"
         )
     }
 
