@@ -20,6 +20,7 @@ struct LimitRingsTests {
             try testPetLifecycleRequiresLiveOverlay()
             try testModernPetSurfaceSchemaRequiresNamedLiveWindow()
             try testLayerThreeDirectPetSurfaceCompatibility()
+            try testOversizedAvatarOverlayCompatibility()
             try testPetStateSnapshotCacheAndMouseDownGate()
             try testRingAnimationVisibilityGate()
             try testModernPetSurfaceDerivesMascotSizeWithoutHistory()
@@ -498,6 +499,119 @@ struct LimitRingsTests {
         try expect(frames.mascot == compactPet, "expected direct mascot bounds not to depend on stale saved origin")
         try expect(frames.overlay == compactPet, "expected direct live surface bounds to gate visibility")
         try expect(frames.usedLiveOverlay, "expected layer-three compatibility to remain live-window gated")
+    }
+
+    private static func testOversizedAvatarOverlayCompatibility() throws {
+        let root = try temporaryDirectory(named: "oversized-avatar-overlay")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent(".codex-global-state.json")
+        let display = CGRect(x: 1_920, y: 0, width: 1_920, height: 1_080)
+        let origin = CGPoint(x: 2_005, y: 908)
+        let reference = CGRect(origin: origin, size: CGSize(width: 113, height: 122))
+        let oversizedOverlay = CGRect(x: 1_673, y: -83, width: 772, height: 2_069)
+        let officialPID: pid_t = 123
+
+        func writeState(open: Bool) throws {
+            let payload: [String: Any] = [
+                "electron-avatar-overlay-open": open,
+                "electron-avatar-overlay-bounds": [
+                    "x": origin.x,
+                    "y": origin.y,
+                    "displayId": 3,
+                    "displayBounds": [
+                        "x": display.minX,
+                        "y": display.minY,
+                        "width": display.width,
+                        "height": display.height
+                    ]
+                ]
+            ]
+            try JSONSerialization.data(withJSONObject: payload).write(to: stateURL)
+        }
+
+        try expect(
+            codexPetSurfaceKind(
+                name: "ChatGPT",
+                ownerPID: officialPID,
+                officialCodexPIDs: [officialPID],
+                layer: 3,
+                bounds: oversizedOverlay,
+                mascotReference: reference,
+                knownDisplayBounds: [display]
+            ) == .oversizedAvatarOverlay,
+            "expected the exact generic oversized avatar overlay from the official ChatGPT process"
+        )
+        try expect(
+            codexPetSurfaceKind(
+                name: nil,
+                ownerPID: officialPID,
+                officialCodexPIDs: [officialPID],
+                layer: 3,
+                bounds: oversizedOverlay,
+                mascotReference: reference,
+                knownDisplayBounds: [display]
+            ) == .oversizedAvatarOverlay,
+            "expected the same strict metadata contract to survive LaunchServices window-name redaction"
+        )
+
+        let rejected: [(String?, pid_t, CGFloat, CGRect, [CGRect], Bool)] = [
+            ("", officialPID, 3, oversizedOverlay, [display], true),
+            ("ChatGPT Settings", officialPID, 3, oversizedOverlay, [display], true),
+            ("ChatGPT", 456, 3, oversizedOverlay, [display], true),
+            ("ChatGPT", officialPID, 0, oversizedOverlay, [display], true),
+            ("ChatGPT", officialPID, 3, oversizedOverlay, [display], false),
+            ("ChatGPT", officialPID, 3, oversizedOverlay, [], true),
+            ("ChatGPT", officialPID, 3, CGRect(x: 2_700, y: -83, width: 772, height: 2_069), [display], true),
+            (nil, officialPID, 3, CGRect(x: 2_700, y: -83, width: 772, height: 2_069), [display], true),
+            ("ChatGPT", officialPID, 3, CGRect(x: 1_690, y: 80, width: 720, height: 84), [display], true),
+            (nil, officialPID, 3, CGRect(x: 1_690, y: 80, width: 720, height: 84), [display], true),
+            ("ChatGPT", officialPID, 3, CGRect(x: 1_650, y: 100, width: 800, height: 900), [display], true),
+            ("ChatGPT", officialPID, 3, CGRect(x: 1_757, y: 950, width: 345, height: 73), [display], true)
+        ]
+        for (name, pid, layer, bounds, displays, onScreen) in rejected {
+            try expect(
+                codexPetSurfaceKind(
+                    name: name,
+                    ownerPID: pid,
+                    officialCodexPIDs: [officialPID],
+                    layer: layer,
+                    bounds: bounds,
+                    mascotReference: reference,
+                    knownDisplayBounds: displays,
+                    isOnScreen: onScreen
+                ) == nil,
+                "expected redacted, ordinary, notification, Activity Stack, off-Space, wrong-display, and foreign-process surfaces to remain excluded"
+            )
+        }
+
+        try writeState(open: true)
+        let reader = PetFrameReader(
+            globalStatePath: stateURL,
+            livePetSurfaceProvider: { _, _ in
+                LiveCodexPetSurface(bounds: oversizedOverlay, kind: .oversizedAvatarOverlay)
+            }
+        )
+        guard let frames = reader.readPetFramesTopLeft(requireLiveOverlay: true) else {
+            throw LimitRingsTestError.failed("expected the oversized avatar overlay to restore a live pet frame")
+        }
+        let expectedMascot = CGRect(x: 2_005, y: 908, width: 108, height: 87)
+        try expect(frames.mascot == expectedMascot, "expected the saved origin and live panel center to reconstruct the current pet")
+        try expect(frames.overlay == expectedMascot, "expected mouse and drag tracking to use the pet rather than the giant Electron panel")
+        try expect(
+            !pointMayStartPetDrag(
+                CGPoint(x: 1_800, y: 200),
+                overlayFrame: frames.overlay,
+                petFrame: frames.mascot,
+                panelFrame: expectedMascot.insetBy(dx: -38, dy: -38)
+            ),
+            "expected an unrelated click inside the giant Electron panel to stay outside the cached pet hit target"
+        )
+
+        try writeState(open: false)
+        try expect(
+            reader.readPetFramesTopLeft(requireLiveOverlay: true) == nil,
+            "expected closed avatar state to reject the otherwise matching oversized overlay"
+        )
     }
 
     private static func testPetStateSnapshotCacheAndMouseDownGate() throws {

@@ -2134,6 +2134,7 @@ struct PetFramesTopLeft {
 enum CodexPetSurfaceKind: Equatable {
     case mascotEffect
     case directMascot
+    case oversizedAvatarOverlay
 }
 
 struct LiveCodexPetSurface: Equatable {
@@ -2147,6 +2148,40 @@ func isCodexPetMascotEffectWindowName(_ name: String?) -> Bool {
 
 func isCodexPetVoiceControlWindowName(_ name: String?) -> Bool {
     name == "Codex Pet Voice Controls Backing"
+}
+
+func isStrictOversizedCodexPetAvatarOverlay(
+    name: String?,
+    ownerPID: pid_t?,
+    officialCodexPIDs: Set<pid_t>,
+    layer: CGFloat,
+    bounds: CGRect,
+    mascotReference: CGRect,
+    knownDisplayBounds: [CGRect]
+) -> Bool {
+    guard name == nil || name == "ChatGPT",
+          let ownerPID,
+          officialCodexPIDs.contains(ownerPID),
+          layer == 3,
+          let display = knownDisplayBounds.first(where: {
+              $0.contains(mascotReference.center) && $0.contains(bounds.center)
+          }),
+          bounds.contains(mascotReference.center) else {
+        return false
+    }
+
+    // Current ChatGPT renders the pet in a transparent Electron panel whose
+    // height exceeds its display. LaunchServices-owned companion apps can see
+    // the exact generic title as redacted even though a terminal diagnostic can
+    // read it. Either title state is accepted only when the official process,
+    // layer, saved pet center, current display, and deliberately oversized
+    // geometry all agree. A generic or redacted name alone is never evidence.
+    let minimumWidth = max(360, display.width * 0.25)
+    let centerTolerance = max(24, min(mascotReference.width, mascotReference.height) * 0.25)
+    return bounds.width >= minimumWidth
+        && bounds.height > display.height
+        && bounds.height >= bounds.width * 1.5
+        && distanceSquared(bounds.center, mascotReference.center) <= centerTolerance * centerTolerance
 }
 
 func isOfficialCodexPetVoiceControlWindow(
@@ -2191,11 +2226,42 @@ func codexPetSurfaceKind(
     layer: CGFloat,
     bounds: CGRect,
     mascotReference: CGRect,
-    knownDisplayBounds: [CGRect] = []
+    knownDisplayBounds: [CGRect] = [],
+    isOnScreen: Bool = true
 ) -> CodexPetSurfaceKind? {
-    guard let ownerPID, officialCodexPIDs.contains(ownerPID), layer > 0 else { return nil }
+    guard isOnScreen,
+          let ownerPID,
+          officialCodexPIDs.contains(ownerPID),
+          layer > 0 else { return nil }
+    if name == "ChatGPT",
+       isStrictOversizedCodexPetAvatarOverlay(
+            name: name,
+            ownerPID: ownerPID,
+            officialCodexPIDs: officialCodexPIDs,
+            layer: layer,
+            bounds: bounds,
+            mascotReference: mascotReference,
+            knownDisplayBounds: knownDisplayBounds
+       ) {
+        return .oversizedAvatarOverlay
+    }
     if let name, !name.isEmpty {
-        return isCodexPetMascotEffectWindowName(name) ? .mascotEffect : nil
+        if isCodexPetMascotEffectWindowName(name) {
+            return .mascotEffect
+        }
+        return nil
+    }
+
+    if isStrictOversizedCodexPetAvatarOverlay(
+        name: name,
+        ownerPID: ownerPID,
+        officialCodexPIDs: officialCodexPIDs,
+        layer: layer,
+        bounds: bounds,
+        mascotReference: mascotReference,
+        knownDisplayBounds: knownDisplayBounds
+    ) {
+        return .oversizedAvatarOverlay
     }
 
     // Window names are redacted for a standalone accessory app unless the user
@@ -2477,18 +2543,11 @@ final class PetFrameReader {
 
         let liveEffect = liveSurface.bounds
 
-        let interactiveControl: CGRect?
-        if let liveInteractiveControlProvider {
-            interactiveControl = liveInteractiveControlProvider(liveEffect)
-        } else {
-            interactiveControl = liveCodexPetVoiceControlBounds(matching: liveEffect)
-        }
-
         let mascot: CGRect
         switch liveSurface.kind {
         case .directMascot:
             mascot = liveEffect
-        case .mascotEffect:
+        case .mascotEffect, .oversizedAvatarOverlay:
             let derivedSize = modernMascotSize(
                 origin: persistedMascotOrigin,
                 effectBounds: liveEffect,
@@ -2502,9 +2561,20 @@ final class PetFrameReader {
                 height: mascotSize.height
             )
         }
+
+        // The oversized Electron panel is only identity evidence. Passing its
+        // full bounds into mouse hit testing would turn most desktop clicks
+        // back into live geometry reads, undoing the v1.0.12 performance gate.
+        let trackingOverlay = liveSurface.kind == .oversizedAvatarOverlay ? mascot : liveEffect
+        let interactiveControl: CGRect?
+        if let liveInteractiveControlProvider {
+            interactiveControl = liveInteractiveControlProvider(trackingOverlay)
+        } else {
+            interactiveControl = liveCodexPetVoiceControlBounds(matching: trackingOverlay)
+        }
         return PetFramesTopLeft(
             mascot: mascot,
-            overlay: liveEffect,
+            overlay: trackingOverlay,
             interactiveControl: interactiveControl,
             usedLiveOverlay: true
         )
@@ -2655,7 +2725,8 @@ final class PetFrameReader {
 
         return windows.compactMap { window -> LiveCodexPetSurface? in
             let ownerPID = (window[kCGWindowOwnerPID as String] as? NSNumber).map { pid_t($0.int32Value) }
-            guard (window[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true,
+            let isOnScreen = (window[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true
+            guard isOnScreen,
                   let layer = number(window[kCGWindowLayer as String]),
                   let payload = window[kCGWindowBounds as String] as? [String: Any],
                   let x = number(payload["X"]),
@@ -2674,7 +2745,8 @@ final class PetFrameReader {
                 layer: layer,
                 bounds: bounds,
                 mascotReference: mascotReference,
-                knownDisplayBounds: knownDisplayBounds
+                knownDisplayBounds: knownDisplayBounds,
+                isOnScreen: isOnScreen
             ) else { return nil }
             return LiveCodexPetSurface(bounds: bounds, kind: kind)
         }

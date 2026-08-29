@@ -1,6 +1,6 @@
 # Codex Pet Limit Rings 1.0.12 Candidate
 
-Version 1.0.12 reduces idle and click-driven work while adding a tightly gated compatibility path for the current compact ChatGPT pet surface.
+Version 1.0.12 reduces idle and click-driven work while adding tightly gated compatibility paths for current compact and oversized ChatGPT pet surfaces.
 
 ## Performance
 
@@ -8,11 +8,13 @@ Version 1.0.12 reduces idle and click-driven work while adding a tightly gated c
 - Parse changed snapshots outside the main thread and coalesce overlapping watcher and watchdog refreshes.
 - Test cached pet geometry before a global click can request live frame discovery.
 - Animate only an effectively visible live pet panel, using monotonic time at 10 frames per second instead of an unconditional 30 frames per second.
-- See the [measured candidate comparison](performance-v1.0.12.md) for the same-condition CPU and sample results, including the remaining on-screen observation gate.
+- See the [measured candidate comparison](performance-v1.0.12.md) for hidden and current oversized-overlay visible CPU and sample results.
 
 ## Pet Surface Compatibility
 
 - Recognize the current small layer-three pet surface only for the official ChatGPT process with strict size, aspect-ratio, display-containment, layer, and on-screen checks.
+- Recognize the modern oversized transparent avatar panel only when official process, on-screen layer, saved open state, current display, screen-exceeding geometry, and saved-pet center alignment all agree; support the exact generic title and its permission-free redaction without treating either name state alone as pet evidence.
+- Use the reconstructed pet bounds, not the giant panel, for click and drag hit testing.
 - Reject normal ChatGPT windows, voice controls, Activity Stack, notifications, other processes, and off-display candidates.
 - Preserve size tracking, drag following, lifecycle visibility, multi-display placement, circular click-through rings, and pet-control hit targets.
 
