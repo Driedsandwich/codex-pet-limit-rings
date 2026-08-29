@@ -8,6 +8,7 @@ Version 1.0.12 reduces idle and click-driven work while adding a tightly gated c
 - Parse changed snapshots outside the main thread and coalesce overlapping watcher and watchdog refreshes.
 - Test cached pet geometry before a global click can request live frame discovery.
 - Animate only an effectively visible live pet panel, using monotonic time at 10 frames per second instead of an unconditional 30 frames per second.
+- See the [measured candidate comparison](performance-v1.0.12.md) for the same-condition CPU and sample results, including the remaining on-screen observation gate.
 
 ## Pet Surface Compatibility
 
