@@ -4,6 +4,16 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
+## 1.0.12 - 2026-08-29
+
+### Performance And Current Pet Surface Compatibility
+
+- Recognize both the compact layer-three pet and the modern oversized transparent avatar panel only when the official process, on-screen state, saved open state, current display, strict geometry, and pet-center alignment agree; reject ordinary ChatGPT windows, voice controls, Activity Stack, notifications, and unrelated processes.
+- Cache the read-only pet-state snapshot by device, inode, size, and nanosecond modification time, parse changed snapshots off the main thread, and coalesce overlapping refresh requests.
+- Gate global mouse-down refreshes with cached pet geometry so unrelated desktop clicks no longer trigger pet-state parsing or live-window enumeration.
+- Reduce the breathing animation from 30 to 10 frames per second, use monotonic time, and destroy the animation timer whenever the rings, live pet, or panel are not effectively visible.
+- Preserve the experimental app-server contract, account and privacy boundaries, complete circular rings, pet controls, drag tracking, lifecycle behavior, and multi-display placement.
+
 ## 1.0.11 - 2026-08-01
 
 ### Pet Controls Clearance
