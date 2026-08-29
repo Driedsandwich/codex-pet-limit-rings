@@ -19,6 +19,7 @@ struct LimitRingsTests {
             try testCodexCLIPathsCoverCurrentChatGPTAppAndPath()
             try testPetLifecycleRequiresLiveOverlay()
             try testModernPetSurfaceSchemaRequiresNamedLiveWindow()
+            try testLayerThreeDirectPetSurfaceCompatibility()
             try testModernPetSurfaceDerivesMascotSizeWithoutHistory()
             try testModernPetSurfaceTracksRuntimeSizeChanges()
             try testPetVoiceControlClearance()
@@ -410,6 +411,91 @@ struct LimitRingsTests {
             throw LimitRingsTestError.failed("expected a fresh modern state to derive mascot geometry from the named effect window")
         }
         try expect(frames.mascot == CGRect(x: 3_581, y: 777, width: 113, height: 122), "expected exact center-based modern mascot size derivation")
+    }
+
+    private static func testLayerThreeDirectPetSurfaceCompatibility() throws {
+        let root = try temporaryDirectory(named: "layer-three-direct-pet")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent(".codex-global-state.json")
+        let display = CGRect(x: 1_920, y: 0, width: 1_920, height: 1_080)
+        let payload: [String: Any] = [
+            "electron-avatar-overlay-open": true,
+            "electron-avatar-overlay-bounds": [
+                "x": 2_005,
+                "y": 908,
+                "displayId": 3,
+                "displayBounds": ["x": 1_920, "y": 0, "width": 1_920, "height": 1_080]
+            ]
+        ]
+        try JSONSerialization.data(withJSONObject: payload).write(to: stateURL)
+
+        let officialPID: pid_t = 123
+        let compactPet = CGRect(x: 2_501, y: 961, width: 84, height: 77)
+        let maximumPet = CGRect(x: 2_400, y: 700, width: 319, height: 319)
+        let reference = CGRect(x: 2_005, y: 908, width: 113, height: 122)
+
+        try expect(
+            codexPetSurfaceKind(
+                name: nil,
+                ownerPID: officialPID,
+                officialCodexPIDs: [officialPID],
+                layer: 3,
+                bounds: compactPet,
+                mascotReference: reference,
+                knownDisplayBounds: [display]
+            ) == .directMascot,
+            "expected the current permission-free layer-three pet surface from the official app"
+        )
+        try expect(
+            codexPetSurfaceKind(
+                name: nil,
+                ownerPID: officialPID,
+                officialCodexPIDs: [officialPID],
+                layer: 3,
+                bounds: maximumPet,
+                mascotReference: reference,
+                knownDisplayBounds: [display]
+            ) == .directMascot,
+            "expected the direct mascot surface to support the maximum pet-size slider geometry"
+        )
+
+        let rejected: [(String?, pid_t, CGRect, [CGRect])] = [
+            ("ChatGPT", officialPID, compactPet, [display]),
+            (nil, 456, compactPet, [display]),
+            (nil, officialPID, compactPet, []),
+            (nil, officialPID, CGRect(x: 600, y: 980, width: 720, height: 84), [display]),
+            (nil, officialPID, CGRect(x: 2_450, y: 900, width: 56, height: 24), [display]),
+            (nil, officialPID, CGRect(x: 2_300, y: 850, width: 345, height: 73), [display]),
+            (nil, officialPID, CGRect(x: 2_300, y: 850, width: 512, height: 223), [display]),
+            (nil, officialPID, CGRect(x: -500, y: 100, width: 84, height: 77), [display])
+        ]
+        for (name, pid, bounds, displays) in rejected {
+            try expect(
+                codexPetSurfaceKind(
+                    name: name,
+                    ownerPID: pid,
+                    officialCodexPIDs: [officialPID],
+                    layer: 3,
+                    bounds: bounds,
+                    mascotReference: reference,
+                    knownDisplayBounds: displays
+                ) == nil,
+                "expected generic, control, activity, notification, off-display, and third-party surfaces to stay excluded"
+            )
+        }
+
+        let reader = PetFrameReader(
+            globalStatePath: stateURL,
+            livePetSurfaceProvider: { _, _ in
+                LiveCodexPetSurface(bounds: compactPet, kind: .directMascot)
+            }
+        )
+        guard let frames = reader.readPetFramesTopLeft(requireLiveOverlay: true) else {
+            throw LimitRingsTestError.failed("expected the direct layer-three pet surface to restore rings")
+        }
+        try expect(frames.mascot == compactPet, "expected direct mascot bounds not to depend on stale saved origin")
+        try expect(frames.overlay == compactPet, "expected direct live surface bounds to gate visibility")
+        try expect(frames.usedLiveOverlay, "expected layer-three compatibility to remain live-window gated")
     }
 
     private static func testModernPetSurfaceTracksRuntimeSizeChanges() throws {
