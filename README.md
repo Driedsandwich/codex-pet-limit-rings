@@ -232,6 +232,7 @@ The app uses a local stdio connection to the Codex app-server currently bundled 
 - `account/rateLimits/read` provides full rate-limit snapshots, while sparse `account/rateLimits/updated` notifications keep available values current between full reads.
 - `account/usage/read` refreshes the memory-only 14-day usage view every 15 minutes.
 - `~/.codex/.codex-global-state.json` provides saved open-state and geometry hints, but those values alone never make the rings visible. A matching live, on-screen ChatGPT pet surface is required.
+- `~/.codex/config.toml` provides only the bounded `[desktop] avatar-overlay-mascot-width-px` value when the current oversized avatar surface omits pet dimensions. The file remains read-only and other settings are ignored.
 - `CGWindowListCopyWindowInfo` supplies the live pet window's owner, layer, and geometry metadata. The app does not capture window pixels or request Screen Recording or Accessibility permission.
 - The newest available `~/.codex/sqlite/logs_2.sqlite` or legacy `~/.codex/logs_2.sqlite` is used as a local fallback if app-server is unavailable.
 

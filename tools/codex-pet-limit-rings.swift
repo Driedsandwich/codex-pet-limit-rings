@@ -100,6 +100,10 @@ let dragLiveMismatchTolerance: CGFloat = 96.0
 private let ringsVisibleDefaultsKey = "CodexPetLimitRings.ringsVisible"
 private let notificationsEnabledDefaultsKey = "CodexPetLimitRings.notificationsEnabled"
 private let notificationBandsDefaultsKey = "CodexPetLimitRings.notificationBands"
+let codexPetMinimumWidth: CGFloat = 80
+let codexPetMaximumWidth: CGFloat = 224
+let codexPetCanvasWidth: CGFloat = 192
+let codexPetCanvasHeight: CGFloat = 208
 let appServerInitializeTimeout: TimeInterval = 15.0
 let appServerRequestTimeout: TimeInterval = 5.0
 private let appServerLimitStateTimeout = appServerRequestTimeout
@@ -633,7 +637,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.12"
+    var version = "1.0.13"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -2131,6 +2135,43 @@ struct PetFramesTopLeft {
     var usedLiveOverlay: Bool
 }
 
+func codexDesktopPetSize(fromTOML contents: String) -> CGSize? {
+    var isDesktopSection = false
+
+    for rawLine in contents.split(whereSeparator: \.isNewline) {
+        let line = rawLine.trimmingCharacters(in: .whitespaces)
+        guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+
+        if line.hasPrefix("[") {
+            isDesktopSection = line == "[desktop]"
+            continue
+        }
+        guard isDesktopSection else { continue }
+
+        let setting = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
+        let parts = setting.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              parts[0].trimmingCharacters(in: .whitespaces) == "avatar-overlay-mascot-width-px" else {
+            continue
+        }
+
+        let value = parts[1].trimmingCharacters(in: .whitespaces)
+        guard let width = Double(value),
+              width.isFinite,
+              width.rounded() == width,
+              width >= Double(codexPetMinimumWidth),
+              width <= Double(codexPetMaximumWidth) else {
+            return nil
+        }
+        let petWidth = CGFloat(width)
+        return CGSize(
+            width: petWidth,
+            height: petWidth * codexPetCanvasHeight / codexPetCanvasWidth
+        )
+    }
+    return nil
+}
+
 enum CodexPetSurfaceKind: Equatable {
     case mascotEffect
     case directMascot
@@ -2352,6 +2393,7 @@ private final class PetStateSnapshot: @unchecked Sendable {
 
 final class PetFrameReader {
     private let globalStatePath: URL
+    private let petSizeConfigPath: URL?
     private let liveOverlayProvider: ((CGRect, CGSize) -> CGRect?)?
     private let liveMascotEffectProvider: ((CGRect) -> CGRect?)?
     private let livePetSurfaceProvider: ((CGRect, [CGRect]) -> LiveCodexPetSurface?)?
@@ -2361,15 +2403,21 @@ final class PetFrameReader {
     private var hasCachedIdentity = false
     private var cachedSnapshot: PetStateSnapshot?
     private var snapshotParseCount = 0
+    private var cachedPetSizeConfigIdentity: PetStateFileIdentity?
+    private var hasCachedPetSizeConfigIdentity = false
+    private var cachedConfiguredPetSize: CGSize?
+    private var petSizeConfigParseCount = 0
 
     init(
         globalStatePath: URL,
+        petSizeConfigPath: URL? = nil,
         liveOverlayProvider: ((CGRect, CGSize) -> CGRect?)? = nil,
         liveMascotEffectProvider: ((CGRect) -> CGRect?)? = nil,
         livePetSurfaceProvider: ((CGRect, [CGRect]) -> LiveCodexPetSurface?)? = nil,
         liveInteractiveControlProvider: ((CGRect) -> CGRect?)? = nil
     ) {
         self.globalStatePath = globalStatePath
+        self.petSizeConfigPath = petSizeConfigPath
         self.liveOverlayProvider = liveOverlayProvider
         self.liveMascotEffectProvider = liveMascotEffectProvider
         self.livePetSurfaceProvider = livePetSurfaceProvider
@@ -2378,6 +2426,7 @@ final class PetFrameReader {
 
     @discardableResult
     func refreshStateSnapshotIfNeeded() -> Bool {
+        refreshPetSizeConfigIfNeeded()
         guard let initialIdentity = petStateFileIdentity(at: globalStatePath) else {
             snapshotLock.withLock {
                 hasCachedIdentity = false
@@ -2417,6 +2466,50 @@ final class PetFrameReader {
 
     var stateParseCountForTesting: Int {
         snapshotLock.withLock { snapshotParseCount }
+    }
+
+    var petSizeConfigParseCountForTesting: Int {
+        snapshotLock.withLock { petSizeConfigParseCount }
+    }
+
+    private func refreshPetSizeConfigIfNeeded() {
+        guard let petSizeConfigPath else { return }
+        guard let initialIdentity = petStateFileIdentity(at: petSizeConfigPath) else {
+            snapshotLock.withLock {
+                hasCachedPetSizeConfigIdentity = false
+                cachedPetSizeConfigIdentity = nil
+                cachedConfiguredPetSize = nil
+            }
+            return
+        }
+
+        if snapshotLock.withLock({
+            hasCachedPetSizeConfigIdentity && cachedPetSizeConfigIdentity == initialIdentity
+        }) {
+            return
+        }
+
+        for _ in 0..<2 {
+            guard let before = petStateFileIdentity(at: petSizeConfigPath),
+                  let data = try? Data(contentsOf: petSizeConfigPath),
+                  let contents = String(data: data, encoding: .utf8),
+                  let after = petStateFileIdentity(at: petSizeConfigPath),
+                  before == after else {
+                continue
+            }
+            let configuredSize = codexDesktopPetSize(fromTOML: contents)
+            snapshotLock.withLock {
+                hasCachedPetSizeConfigIdentity = true
+                cachedPetSizeConfigIdentity = after
+                cachedConfiguredPetSize = configuredSize
+                petSizeConfigParseCount += 1
+            }
+            return
+        }
+    }
+
+    private func currentConfiguredPetSize() -> CGSize? {
+        snapshotLock.withLock { cachedConfiguredPetSize }
     }
 
     private func currentStateRoot() -> [String: Any]? {
@@ -2507,7 +2600,8 @@ final class PetFrameReader {
         liveReference: CGRect?
     ) -> PetFramesTopLeft? {
         let historicalSize = historicalMascotSize(in: bounds)
-        let referenceSize = historicalSize ?? CGSize(width: 113, height: 122)
+        let configuredPetSize = currentConfiguredPetSize()
+        let referenceSize = configuredPetSize ?? historicalSize ?? CGSize(width: 113, height: 122)
         let persistedMascot = CGRect(origin: persistedMascotOrigin, size: referenceSize)
         let shouldReadLiveEffect = preferLiveOverlay || requireLiveOverlay
         let knownDisplayBounds = knownPetDisplayBounds(in: bounds)
@@ -2547,7 +2641,7 @@ final class PetFrameReader {
         switch liveSurface.kind {
         case .directMascot:
             mascot = liveEffect
-        case .mascotEffect, .oversizedAvatarOverlay:
+        case .mascotEffect:
             let derivedSize = modernMascotSize(
                 origin: persistedMascotOrigin,
                 effectBounds: liveEffect,
@@ -2560,6 +2654,27 @@ final class PetFrameReader {
                 width: mascotSize.width,
                 height: mascotSize.height
             )
+        case .oversizedAvatarOverlay:
+            if let configuredPetSize {
+                // Current ChatGPT exposes the actual pet canvas width in its
+                // read-only desktop config. The oversized Electron surface is
+                // deliberately much larger and may not share the pet's visual
+                // center, so use it only as identity evidence.
+                mascot = CGRect(origin: persistedMascotOrigin, size: configuredPetSize)
+            } else {
+                let derivedSize = modernMascotSize(
+                    origin: persistedMascotOrigin,
+                    effectBounds: liveEffect,
+                    historicalSize: historicalSize
+                )
+                guard let mascotSize = derivedSize ?? historicalSize else { return nil }
+                mascot = CGRect(
+                    x: liveEffect.midX - mascotSize.width / 2,
+                    y: liveEffect.midY - mascotSize.height / 2,
+                    width: mascotSize.width,
+                    height: mascotSize.height
+                )
+            }
         }
 
         // The oversized Electron panel is only identity evidence. Passing its
@@ -3579,7 +3694,10 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         self.config = config
         self.stateReader = LimitStateReader(logsPath: config.logsPath)
         self.liveClient = AppServerLiveClient(codexHome: config.codexHome)
-        self.frameReader = PetFrameReader(globalStatePath: config.globalStatePath)
+        self.frameReader = PetFrameReader(
+            globalStatePath: config.globalStatePath,
+            petSizeConfigPath: config.codexHome.appendingPathComponent("config.toml")
+        )
         self.ringView = LimitRingView(frame: CGRect(origin: .zero, size: CGSize(width: config.fallbackSize, height: config.fallbackSize)))
         self.ringsVisible = UserDefaults.standard.object(forKey: ringsVisibleDefaultsKey) as? Bool ?? true
         self.notificationsEnabled = notificationsEnabledFromStoredValue(
@@ -5328,7 +5446,10 @@ func runDiagnostics(config: LimitRingsConfig) -> Bool {
     }
 
     let accessibility = AccessibilityPresentation.current
-    let petFrames = PetFrameReader(globalStatePath: config.globalStatePath)
+    let petFrames = PetFrameReader(
+        globalStatePath: config.globalStatePath,
+        petSizeConfigPath: config.codexHome.appendingPathComponent("config.toml")
+    )
         .readPetFramesTopLeft(requireLiveOverlay: true)
     let diagnostics = CompatibilityDiagnostics(
         appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development",
