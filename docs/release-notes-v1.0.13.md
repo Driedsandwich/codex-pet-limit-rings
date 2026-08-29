@@ -1,4 +1,4 @@
-# Codex Pet Limit Rings 1.0.13 Candidate
+# Codex Pet Limit Rings 1.0.13
 
 Version 1.0.13 corrects ring alignment for the modern oversized ChatGPT avatar surface without capturing pixels or adding permissions.
 
@@ -17,9 +17,13 @@ Version 1.0.13 corrects ring alignment for the modern oversized ChatGPT avatar s
 
 ## Publication Status
 
-- Candidate only. No `v1.0.13` tag or GitHub Release exists yet.
-- Planned compatibility: Apple silicon `arm64`, macOS `15.0` or later, ad-hoc signed and not notarized.
+- Release: [`v1.0.13`](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.13).
+- Release target: `acf93391a925999e28df7888ece97e65fc26e92a`.
+- ZIP SHA-256: `dd0ef8c31df8af0c5e3dbc2b5fcf614cfc4942f8191aec3f164eabbbc8c76a78`.
+- Compatibility: Apple silicon `arm64`, macOS `15.0` or later, ad-hoc signed and not notarized.
+- Main CI run [`33234562005`](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/33234562005) passed the verifier, package checks, and pinned v1.0.0 and v1.0.9 public artifact smoke tests on macOS 15 and macOS 26.
+- The published artifact smoke test passed checksum, archive allowlisting, local-path sanitization, signature, architecture, version, deployment-target, English/Japanese resources, preview execution, and privacy-safe diagnostic checks.
 
 ## Rollback
 
-Retain the published v1.0.12 app, LaunchAgent, preferences, and local Skill in a timestamped backup before candidate installation. Restore that backup and bootstrap the restored LaunchAgent if alignment, controls, refresh behavior, or resource use regresses. See [rollback.md](rollback.md).
+Keep the previous app, LaunchAgent, preferences, and local Skill in a timestamped backup before replacement. To roll back, restore the published v1.0.12 app and saved plist, restore preferences and Skill if needed, then bootstrap the restored LaunchAgent. See [rollback.md](rollback.md).
