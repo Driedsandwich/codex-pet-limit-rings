@@ -2890,9 +2890,10 @@ func pointMayStartPetDrag(
 func ringAnimationShouldRun(
     ringsVisible: Bool,
     hasLivePetFrame: Bool,
-    panelVisible: Bool
+    panelVisible: Bool,
+    reduceMotion: Bool
 ) -> Bool {
-    ringsVisible && hasLivePetFrame && panelVisible
+    ringsVisible && hasLivePetFrame && panelVisible && !reduceMotion
 }
 
 struct AccessibilityPresentation {
@@ -3577,7 +3578,8 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         guard ringAnimationShouldRun(
             ringsVisible: ringsVisible,
             hasLivePetFrame: currentPetFrameAppKit != nil,
-            panelVisible: panel.isVisible
+            panelVisible: panel.isVisible,
+            reduceMotion: AccessibilityPresentation.current.reduceMotion
         ) else {
             stopAnimation()
             return
@@ -3590,7 +3592,8 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             guard ringAnimationShouldRun(
                 ringsVisible: self.ringsVisible,
                 hasLivePetFrame: self.currentPetFrameAppKit != nil,
-                panelVisible: self.panel.isVisible
+                panelVisible: self.panel.isVisible,
+                reduceMotion: AccessibilityPresentation.current.reduceMotion
             ) else {
                 self.stopAnimation()
                 return

@@ -575,20 +575,24 @@ struct LimitRingsTests {
 
     private static func testRingAnimationVisibilityGate() throws {
         try expect(
-            ringAnimationShouldRun(ringsVisible: true, hasLivePetFrame: true, panelVisible: true),
+            ringAnimationShouldRun(ringsVisible: true, hasLivePetFrame: true, panelVisible: true, reduceMotion: false),
             "expected animation only while the ring panel is effectively visible"
         )
         try expect(
-            !ringAnimationShouldRun(ringsVisible: false, hasLivePetFrame: true, panelVisible: true),
+            !ringAnimationShouldRun(ringsVisible: false, hasLivePetFrame: true, panelVisible: true, reduceMotion: false),
             "expected hidden rings to stop animation"
         )
         try expect(
-            !ringAnimationShouldRun(ringsVisible: true, hasLivePetFrame: false, panelVisible: true),
+            !ringAnimationShouldRun(ringsVisible: true, hasLivePetFrame: false, panelVisible: true, reduceMotion: false),
             "expected a missing pet to stop animation"
         )
         try expect(
-            !ringAnimationShouldRun(ringsVisible: true, hasLivePetFrame: true, panelVisible: false),
+            !ringAnimationShouldRun(ringsVisible: true, hasLivePetFrame: true, panelVisible: false, reduceMotion: false),
             "expected an ordered-out or off-Space panel to stop animation"
+        )
+        try expect(
+            !ringAnimationShouldRun(ringsVisible: true, hasLivePetFrame: true, panelVisible: true, reduceMotion: true),
+            "expected Reduced Motion to stop the animation timer and redraws"
         )
     }
 

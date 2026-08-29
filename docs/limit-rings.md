@@ -53,7 +53,7 @@ The app discovers Codex CLI installations from explicit environment overrides, t
 - Exact percentages are shown only on hover to keep the pet feeling ambient rather than dashboard-like.
 - Additional model-limit buckets may appear as small outer markers when available.
 - Reduced Motion freezes pulse and glint animation. Increase Contrast strengthens tracks and readouts. Differentiate Without Color uses a dashed secondary ring and alternating marker shapes.
-- The breathing animation uses monotonic time at 10 frames per second only while the live pet and ring panel are effectively visible; hiding the rings, losing the pet, or switching its Space stops both the timer and redraws.
+- The breathing animation uses monotonic time at 10 frames per second only while the live pet and ring panel are effectively visible and Reduced Motion is off; hiding the rings, losing the pet, switching its Space, or enabling Reduced Motion stops both the timer and redraws.
 - Daily bars use filled and dotted text segments plus numeric token labels, so they do not depend on color or animation and inherit macOS contrast behavior.
 - Connection and freshness states use distinct words and symbols (`●`, `↻`, `↙`, `✓`, `!`, `…`), remain static under Reduced Motion, and do not depend on color.
 
