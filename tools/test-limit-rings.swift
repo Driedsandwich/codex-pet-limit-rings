@@ -20,6 +20,7 @@ struct LimitRingsTests {
             try testPetLifecycleRequiresLiveOverlay()
             try testModernPetSurfaceSchemaRequiresNamedLiveWindow()
             try testLayerThreeDirectPetSurfaceCompatibility()
+            try testPetStateSnapshotCacheAndMouseDownGate()
             try testModernPetSurfaceDerivesMascotSizeWithoutHistory()
             try testModernPetSurfaceTracksRuntimeSizeChanges()
             try testPetVoiceControlClearance()
@@ -496,6 +497,79 @@ struct LimitRingsTests {
         try expect(frames.mascot == compactPet, "expected direct mascot bounds not to depend on stale saved origin")
         try expect(frames.overlay == compactPet, "expected direct live surface bounds to gate visibility")
         try expect(frames.usedLiveOverlay, "expected layer-three compatibility to remain live-window gated")
+    }
+
+    private static func testPetStateSnapshotCacheAndMouseDownGate() throws {
+        let root = try temporaryDirectory(named: "pet-state-snapshot-cache")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent(".codex-global-state.json")
+        let payload: [String: Any] = [
+            "electron-avatar-overlay-open": true,
+            "electron-avatar-overlay-bounds": [
+                "x": 100,
+                "y": 200,
+                "width": 180,
+                "height": 180,
+                "mascot": ["left": 20, "top": 24, "width": 120, "height": 120]
+            ]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        try data.write(to: stateURL)
+        let firstDate = Date(timeIntervalSince1970: 1_700_000_000)
+        try FileManager.default.setAttributes([.modificationDate: firstDate], ofItemAtPath: stateURL.path)
+
+        let reader = PetFrameReader(globalStatePath: stateURL)
+        try expect(reader.readPetFramesTopLeft() != nil, "expected the initial pet state snapshot")
+        try expect(reader.stateParseCountForTesting == 1, "expected one initial JSON parse")
+        try expect(reader.readPetFramesTopLeft() != nil, "expected the cached pet state snapshot")
+        try expect(reader.stateParseCountForTesting == 1, "expected unchanged mtime, size, and inode to skip parsing")
+
+        try FileManager.default.setAttributes(
+            [.modificationDate: firstDate.addingTimeInterval(10)],
+            ofItemAtPath: stateURL.path
+        )
+        try expect(reader.readPetFramesTopLeft() != nil, "expected an mtime change to refresh the snapshot")
+        try expect(reader.stateParseCountForTesting == 2, "expected changed file metadata to parse exactly once")
+
+        guard let beforeReplace = petStateFileIdentity(at: stateURL) else {
+            throw LimitRingsTestError.failed("expected the original state identity")
+        }
+        let replacement = root.appendingPathComponent("replacement.json")
+        try data.write(to: replacement)
+        try FileManager.default.setAttributes(
+            [.modificationDate: firstDate.addingTimeInterval(10)],
+            ofItemAtPath: replacement.path
+        )
+        try FileManager.default.removeItem(at: stateURL)
+        try FileManager.default.moveItem(at: replacement, to: stateURL)
+        guard let afterReplace = petStateFileIdentity(at: stateURL) else {
+            throw LimitRingsTestError.failed("expected the replacement state identity")
+        }
+        try expect(beforeReplace.inode != afterReplace.inode, "expected the atomic replacement fixture to change inode")
+        try expect(reader.readPetFramesTopLeft() != nil, "expected an inode change to refresh the snapshot")
+        try expect(reader.stateParseCountForTesting == 3, "expected atomic replacement to parse exactly once")
+
+        let pet = CGRect(x: 500, y: 500, width: 100, height: 100)
+        let overlay = pet.insetBy(dx: -20, dy: -20)
+        let panel = pet.insetBy(dx: -30, dy: -30)
+        try expect(
+            !pointMayStartPetDrag(
+                CGPoint(x: 50, y: 50),
+                overlayFrame: overlay,
+                petFrame: pet,
+                panelFrame: panel
+            ),
+            "expected an unrelated desktop click to avoid live pet refresh"
+        )
+        try expect(
+            pointMayStartPetDrag(
+                CGPoint(x: pet.midX, y: pet.midY),
+                overlayFrame: overlay,
+                petFrame: pet,
+                panelFrame: panel
+            ),
+            "expected a cached pet hit to permit live geometry refresh"
+        )
     }
 
     private static func testModernPetSurfaceTracksRuntimeSizeChanges() throws {

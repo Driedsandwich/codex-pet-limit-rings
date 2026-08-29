@@ -2255,12 +2255,45 @@ func isOfficialCodexPetMascotEffectWindow(
     ) != nil
 }
 
+struct PetStateFileIdentity: Equatable {
+    var device: UInt64
+    var inode: UInt64
+    var size: Int64
+    var modifiedSeconds: Int64
+    var modifiedNanoseconds: Int64
+}
+
+func petStateFileIdentity(at url: URL) -> PetStateFileIdentity? {
+    var metadata = stat()
+    guard lstat(url.path, &metadata) == 0 else { return nil }
+    return PetStateFileIdentity(
+        device: UInt64(metadata.st_dev),
+        inode: UInt64(metadata.st_ino),
+        size: Int64(metadata.st_size),
+        modifiedSeconds: Int64(metadata.st_mtimespec.tv_sec),
+        modifiedNanoseconds: Int64(metadata.st_mtimespec.tv_nsec)
+    )
+}
+
+private final class PetStateSnapshot: @unchecked Sendable {
+    let root: [String: Any]
+
+    init(root: [String: Any]) {
+        self.root = root
+    }
+}
+
 final class PetFrameReader {
     private let globalStatePath: URL
     private let liveOverlayProvider: ((CGRect, CGSize) -> CGRect?)?
     private let liveMascotEffectProvider: ((CGRect) -> CGRect?)?
     private let livePetSurfaceProvider: ((CGRect, [CGRect]) -> LiveCodexPetSurface?)?
     private let liveInteractiveControlProvider: ((CGRect) -> CGRect?)?
+    private let snapshotLock = NSLock()
+    private var cachedIdentity: PetStateFileIdentity?
+    private var hasCachedIdentity = false
+    private var cachedSnapshot: PetStateSnapshot?
+    private var snapshotParseCount = 0
 
     init(
         globalStatePath: URL,
@@ -2276,13 +2309,63 @@ final class PetFrameReader {
         self.liveInteractiveControlProvider = liveInteractiveControlProvider
     }
 
+    @discardableResult
+    func refreshStateSnapshotIfNeeded() -> Bool {
+        guard let initialIdentity = petStateFileIdentity(at: globalStatePath) else {
+            snapshotLock.withLock {
+                hasCachedIdentity = false
+                cachedIdentity = nil
+                cachedSnapshot = nil
+            }
+            return false
+        }
+
+        if let available = snapshotLock.withLock({ () -> Bool? in
+            guard hasCachedIdentity, cachedIdentity == initialIdentity else { return nil }
+            return cachedSnapshot != nil
+        }) {
+            return available
+        }
+
+        for _ in 0..<2 {
+            guard let before = petStateFileIdentity(at: globalStatePath),
+                  let data = try? Data(contentsOf: globalStatePath) else {
+                return false
+            }
+            let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            guard let after = petStateFileIdentity(at: globalStatePath), before == after else {
+                continue
+            }
+
+            snapshotLock.withLock {
+                hasCachedIdentity = true
+                cachedIdentity = after
+                cachedSnapshot = root.map(PetStateSnapshot.init)
+                snapshotParseCount += 1
+            }
+            return root != nil
+        }
+        return false
+    }
+
+    var stateParseCountForTesting: Int {
+        snapshotLock.withLock { snapshotParseCount }
+    }
+
+    private func currentStateRoot() -> [String: Any]? {
+        snapshotLock.withLock { cachedSnapshot?.root }
+    }
+
     func readPetFramesTopLeft(
         preferLiveOverlay: Bool = false,
         requireLiveOverlay: Bool = false,
-        liveReference: CGRect? = nil
+        liveReference: CGRect? = nil,
+        refreshSnapshot: Bool = true
     ) -> PetFramesTopLeft? {
-        guard let data = try? Data(contentsOf: globalStatePath),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        if refreshSnapshot {
+            refreshStateSnapshotIfNeeded()
+        }
+        guard let root = currentStateRoot(),
               isAvatarOverlayOpen(root),
               let bounds = root["electron-avatar-overlay-bounds"] as? [String: Any],
               let x = number(bounds["x"]),
@@ -2786,6 +2869,21 @@ func localInteractiveExclusionRect(
 func pointIsInsidePetInteractiveControl(_ point: CGPoint, controlFrame: CGRect?, clearance: CGFloat = 6) -> Bool {
     guard let controlFrame = effectivePetInteractiveControlFrame(controlFrame) else { return false }
     return controlFrame.insetBy(dx: -clearance, dy: -clearance).contains(point)
+}
+
+func pointMayStartPetDrag(
+    _ point: CGPoint,
+    overlayFrame: CGRect?,
+    petFrame: CGRect?,
+    panelFrame: CGRect
+) -> Bool {
+    if let overlayFrame, overlayFrame.insetBy(dx: -4, dy: -4).contains(point) {
+        return true
+    }
+    if let petFrame, petFrame.insetBy(dx: -24, dy: -24).contains(point) {
+        return true
+    }
+    return panelFrame.insetBy(dx: -4, dy: -4).contains(point)
 }
 
 struct AccessibilityPresentation {
@@ -3327,6 +3425,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private let panel: NSPanel
     private let ringView: LimitRingView
     private let stateQueue = DispatchQueue(label: "codex-pet-limit-rings.state-reader")
+    private let petStateQueue = DispatchQueue(label: "codex-pet-limit-rings.pet-state-reader", qos: .utility)
     private let fullSnapshotWatchdogQueue = DispatchQueue(label: "codex-pet-limit-rings.full-snapshot-watchdog")
     private let petFrameFallbackQueue = DispatchQueue(label: "codex-pet-limit-rings.pet-frame-fallback")
     private var statusItem: NSStatusItem?
@@ -3353,6 +3452,9 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private var pendingGlobalStateWatcherRestart: DispatchWorkItem?
     private var pendingFrameUpdate: DispatchWorkItem?
     private var pendingApplicationFrameUpdate: DispatchWorkItem?
+    private var petStateRefreshInFlight = false
+    private var pendingPetStateRefresh = false
+    private var pendingPetStatePreferLiveOverlay = false
     private var workspaceApplicationObservers: [NSObjectProtocol] = []
     private var startTime = Date()
     private var currentPetFrameAppKit: CGRect?
@@ -3447,7 +3549,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         updateDailyUsageMenu()
         liveClient.start()
         startFullSnapshotWatchdog()
-        updateFrame()
+        requestFrameRefresh()
         installGlobalStateWatcher()
         installCodexApplicationObservers()
         startPetFrameFallbackWatchdog()
@@ -3681,7 +3783,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.pendingFrameUpdate = nil
-            self.updateFrame()
+            self.requestFrameRefresh()
             self.updateTooltip(at: NSEvent.mouseLocation)
         }
         pendingFrameUpdate = work
@@ -3698,7 +3800,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         )
         source.setEventHandler { [weak self] in
             DispatchQueue.main.async {
-                self?.updateFrame()
+                self?.requestFrameRefresh()
             }
         }
         petFrameFallbackSource = source
@@ -3727,18 +3829,40 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     }
 
     private func refreshPetFrameForApplicationLifecycleChange() {
-        updateFrame()
+        requestFrameRefresh()
         pendingApplicationFrameUpdate?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.pendingApplicationFrameUpdate = nil
-            self.updateFrame()
+            self.requestFrameRefresh()
         }
         pendingApplicationFrameUpdate = work
         DispatchQueue.main.asyncAfter(
             deadline: .now() + petFrameApplicationLaunchGraceInterval,
             execute: work
         )
+    }
+
+    private func requestFrameRefresh(preferLiveOverlay: Bool = false) {
+        pendingPetStateRefresh = true
+        pendingPetStatePreferLiveOverlay = pendingPetStatePreferLiveOverlay || preferLiveOverlay
+        guard !petStateRefreshInFlight else { return }
+
+        petStateRefreshInFlight = true
+        pendingPetStateRefresh = false
+        let requestedPreferLiveOverlay = pendingPetStatePreferLiveOverlay
+        pendingPetStatePreferLiveOverlay = false
+        petStateQueue.async { [weak self] in
+            guard let self else { return }
+            self.frameReader.refreshStateSnapshotIfNeeded()
+            DispatchQueue.main.async {
+                self.petStateRefreshInFlight = false
+                self.updateFrame(preferLiveOverlay: requestedPreferLiveOverlay)
+                if self.pendingPetStateRefresh {
+                    self.requestFrameRefresh()
+                }
+            }
+        }
     }
 
     private func updateFrame(preferLiveOverlay: Bool = false) {
@@ -3754,7 +3878,8 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         guard let petFrames = frameReader.readPetFramesTopLeft(
             preferLiveOverlay: preferLiveOverlay,
             requireLiveOverlay: true,
-            liveReference: liveReference
+            liveReference: liveReference,
+            refreshSnapshot: false
         ) else {
             currentPetFrameAppKit = nil
             currentPetOverlayTopLeft = nil
@@ -4587,7 +4712,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             snapshotIsStale: snapshotIsStale,
             usageEpoch: usageEpoch
         )
-        updateFrame()
+        requestFrameRefresh()
         updateRingVisibility()
     }
 
@@ -4620,12 +4745,12 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func beginDragFollowIfNeeded(at mouse: CGPoint) {
         guard ringsVisible else { return }
-        updateFrame()
         guard !pointIsInsidePetInteractiveControl(mouse, controlFrame: currentPetInteractiveControlFrameAppKit) else {
             ringView.showsReadout = false
             return
         }
         guard isLikelyPetDragStart(at: mouse) else { return }
+        updateFrame(preferLiveOverlay: true)
         guard let petFrame = currentPetFrameAppKit,
               let overlayFrame = currentPetOverlayFrameAppKit else { return }
         dragMouseToPetOriginOffsetAppKit = CGPoint(x: petFrame.minX - mouse.x, y: petFrame.minY - mouse.y)
@@ -4658,10 +4783,10 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         stopDragFollowTimer()
         holdDraggedFrameUntil = Date().addingTimeInterval(0.18)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) { [weak self] in
-            self?.updateFrame()
+            self?.requestFrameRefresh(preferLiveOverlay: true)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.updateFrame()
+            self?.requestFrameRefresh(preferLiveOverlay: true)
         }
     }
 
@@ -4680,7 +4805,11 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         let predictedOverlayFrame = predictedDragOverlayFrame(at: mouse)
         let liveReference = predictedOverlayFrame.flatMap { topLeftRectFromAppKit($0) } ?? currentPetOverlayTopLeft
 
-        if let petFrames = frameReader.readPetFramesTopLeft(preferLiveOverlay: true, liveReference: liveReference),
+        if let petFrames = frameReader.readPetFramesTopLeft(
+            preferLiveOverlay: true,
+            liveReference: liveReference,
+            refreshSnapshot: false
+        ),
            petFrames.usedLiveOverlay {
             let livePetFrame = appKitRectFromTopLeft(petFrames.mascot)
             if let predictedPetFrame {
@@ -4767,15 +4896,12 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     }
 
     private func isLikelyPetDragStart(at mouse: CGPoint) -> Bool {
-        if let overlay = currentPetOverlayFrameAppKit,
-           overlay.insetBy(dx: -4, dy: -4).contains(mouse) {
-            return true
-        }
-        if let petFrame = currentPetFrameAppKit,
-           petFrame.insetBy(dx: -24, dy: -24).contains(mouse) {
-            return true
-        }
-        return panel.frame.insetBy(dx: -4, dy: -4).contains(mouse)
+        pointMayStartPetDrag(
+            mouse,
+            overlayFrame: currentPetOverlayFrameAppKit,
+            petFrame: currentPetFrameAppKit,
+            panelFrame: panel.frame
+        )
     }
 
     private func updateTooltip(at mouse: CGPoint) {
