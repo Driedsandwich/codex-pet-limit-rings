@@ -132,7 +132,7 @@ The first downstream parent commit changes live pet-window matching from the vis
 - Apply the same bounded recovery to an overdue watchdog read, and mark old values stale rather than live until a full snapshot succeeds.
 - Keep connection state, timeout reason, success time, and recovery path in memory-only localized diagnostics.
 
-## v1.0.10 Runtime And Release Trust Candidate
+## v1.0.10 Runtime And Release Trust
 
 - Preserve the newest valid memory-only app-server snapshot across transient failures and compare it with the read-only SQLite fallback by observation time.
 - Separate the 15-second app-server initialization deadline from the five-second read deadline so current CLI startup latency does not trigger a false reconnect loop.
@@ -141,6 +141,28 @@ The first downstream parent commit changes live pet-window matching from the vis
 - Avoid structural Connection Health menu updates while AppKit is tracking the menu.
 - Pin public artifact digests, tighten archive and privacy checks, reject dangerous recursive-removal paths, and make signing and rollback fail closed.
 - Add no dashboard feature, account mutation, thread access, persistence, permission, telemetry, or new app-server method.
+
+## v1.0.11 Pet Controls Clearance
+
+- Recognize the normal and contracted ChatGPT pet voice-control surfaces only when the official process, exact available name, layer, position, and tightly bounded geometry agree.
+- Keep the redacted-name fallback on the stricter normal-size bounds so the contracted path does not widen false-positive matching.
+- Normalize the contracted surface around its live center to a bounded interaction target while keeping the visual rings complete, circular, and click-through.
+- Exclude only that target from hover readouts and pet-drag tracking without capturing pixels or requesting another permission.
+
+## v1.0.12 Performance And Modern Pet Surface
+
+- Cache the read-only global-state snapshot by device, inode, size, and nanosecond modification time, parse changed snapshots off the main thread, and coalesce overlapping refreshes.
+- Reject unrelated global clicks with cached pet geometry before refreshing live window metadata.
+- Animate only an effectively visible ring panel at a monotonic 10 frames per second, destroying the timer while the rings, live pet, or panel are not visible or Reduced Motion is enabled.
+- Recognize compact and oversized layer-three pet surfaces only when the official process, on-screen state, saved open state, display containment, strict geometry, and saved pet reference agree.
+- Reject ordinary ChatGPT windows, voice controls, Activity Stack, notifications, unrelated processes, off-display surfaces, and Stage Manager thumbnails without adding Screen Recording or Accessibility permission.
+
+## v1.0.13 Oversized Pet Alignment
+
+- Treat the oversized transparent avatar panel as identity evidence only rather than assuming that its center is the visible pet center.
+- Read only the bounded `[desktop] avatar-overlay-mascot-width-px` setting and combine it with the currently verified 192-by-208 pet canvas ratio to reconstruct the pet frame from the saved origin.
+- Cache the size setting by the same file-identity contract and ignore every other configuration value.
+- Retain the bounded v1.0.12 live-center reconstruction when the setting is absent or invalid, preserving drag behavior, controls, multiple displays, performance, and the existing privacy boundary.
 
 ## Known Compatibility Risks
 
