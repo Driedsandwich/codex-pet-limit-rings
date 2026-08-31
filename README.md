@@ -11,12 +11,18 @@ _Privacy-safe v1.0.13 capture on the modern oversized avatar surface. Usage read
 - The outer ring shows the optional short-window limit remaining.
 - The inner ring shows the weekly limit remaining, including weekly-only responses.
 - The rings resize and recenter with the current pet and follow it across supported displays.
-- Hovering over the pet or rings reveals the exact remaining percentages without putting live account values in the documentation screenshot.
+- Hovering over the pet or rings reveals the exact remaining percentages. The examples below separate the clean non-hover overview from an account-dependent hover readout.
 - The menu shows all reported limit buckets, credits, monthly spend controls, reset-credit availability, and freshness without modifying the account.
 - Daily Usage summarizes the latest 14 reported account-usage days in memory only.
 - Connection Health distinguishes live, cached, local, stale, and reconnecting states with text and non-color markers.
 - Optional 25%, 10%, and recovery notifications are local, off by default, and request permission only after opt-in.
 - Reduced Motion, Increase Contrast, Differentiate Without Color, English, and Japanese are supported.
+
+### Optional five-hour window example
+
+![Codex Pet Limit Rings with hover readouts for optional five-hour and weekly limits](docs/assets/codex-pet-limit-rings-five-hour-hover.png)
+
+_Example from an account where the optional five-hour limit is available. The top hover label shows the short-window limit and the bottom label shows the weekly limit. Available buckets, remaining values, and reset times vary by account; the values shown here are illustrative._
 
 When ChatGPT exits or the pet is closed, minimized, or moved off the active Space, the rings disappear instead of remaining at stale coordinates. They return automatically when a supported live pet surface returns.
 
