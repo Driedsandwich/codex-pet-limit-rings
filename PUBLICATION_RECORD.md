@@ -1,6 +1,20 @@
 # Publication Record
 
-status: v1.0.13-released
+status: v1.0.14-released
+
+## Current Release: v1.0.14 (2026-09-23)
+
+- Runtime/specification PR: [#50](https://github.com/Driedsandwich/codex-pet-limit-rings/pull/50), merged.
+- Release target: `c53255e47155930b8ebc83f97aa836a9d1b5ebf1`.
+- Target tree: `83f0f0c373ff19810bc760fa0715f183a27acb60`, identical to tested PR head `760550d8a5172263dfecc1115c62f9e380560dd2`.
+- PR CI [35798995400](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/35798995400) and main CI [35799230479](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/35799230479) passed on macOS 15 and 26.
+- Tag and public Release: [v1.0.14](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.14).
+- ZIP SHA-256: `7e4ebe4b43fd9b73ea7668fa5394136736db58b30c95ed633aac09f6bf66bb47`; GitHub asset digest and re-downloaded bytes agree.
+- Apple silicon `arm64`, macOS `15.0` in Info.plist and Mach-O, version `1.0.14`, build `23`; ad-hoc signed, not notarized.
+- Published ZIP passed checksum, allowlist, signature, architecture, version, deployment-target, resource, local-path, synthetic-preview, and fixture-diagnostic gates. The fixture must report ready and its expected CLI version.
+- The installed bundle matched every file in the tested package. A separate real-CLI diagnostic reported app-server ready and a readable pet frame; launch-at-login was running and notifications remained off. The installed local Skill was preserved.
+- Operator confirmation established current pet alignment before the additional communication/interaction hardening. No new direct AI screen inspection or measured CPU improvement is claimed.
+- The [specification audit](docs/specification-audit-v1.0.14.md) records preserved legacy behavior, corrected defects, the initial historical-artifact live failure, and verification limits.
 
 ## Source Commits
 
@@ -27,6 +41,7 @@ status: v1.0.13-released
 - v1.0.11 release merge commit: `7df5bba91e1f1c5805da463164edc71aa995c7b4`
 - v1.0.12 release merge commit: `08754b592841bf0bfccd885fb688e8deec4342e9`
 - v1.0.13 release merge commit: `acf93391a925999e28df7888ece97e65fc26e92a`
+- v1.0.14 release merge commit: `c53255e47155930b8ebc83f97aa836a9d1b5ebf1`
 
 ## Publication Targets
 
