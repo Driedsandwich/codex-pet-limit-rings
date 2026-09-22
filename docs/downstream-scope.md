@@ -6,6 +6,14 @@
 - Upstream baseline: `9962bd0c4df0c2f16e7e10af0b6c23db84702878`
 - License: MIT; the original copyright and license text remain unchanged.
 
+## v1.0.14 Compatibility And Maintenance Audit
+
+- Recognize the separately verified asymmetric native pet panel in ChatGPT 26.917 while preserving older surface profiles and strict live-window evidence.
+- Isolate sparse updates by limit ID and preserve UTF-8 across stdio read boundaries.
+- Avoid unchanged-hover redraws and accidental pet tracking from unrelated drags; defer menu structure changes during tracking.
+- Validate a staged build before stopping an existing installation, preserve complete rollback inputs, and check both bundle and binary deployment targets.
+- Keep account access read-only, usage memory-only, notifications opt-in, and the original permission and product boundaries. The audit adds no model invocation, telemetry, or dependency.
+
 ## Upstream-Compatible Commit
 
 The first downstream parent commit changes live pet-window matching from the visible owner name `Codex` to the application bundle identifier `com.openai.codex`, while retaining the legacy owner-name fallback. This is intentionally isolated so it can be proposed upstream without the rest of the downstream feature set.

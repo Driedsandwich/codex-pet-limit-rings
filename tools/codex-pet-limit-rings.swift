@@ -637,7 +637,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.13"
+    var version = "1.0.14"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -848,11 +848,20 @@ struct AppServerRateLimitResult: Decodable {
 
     func mergingSparse(_ update: AppServerRateLimitSnapshot) -> AppServerRateLimitResult {
         var merged = self
-        merged.rateLimits = rateLimits.mergingSparse(update)
-        if rateLimitsByLimitId != nil {
-            let updateID = update.limitId ?? rateLimits.limitId ?? "codex"
-            var byID = merged.rateLimitsByLimitId ?? [:]
-            byID[updateID] = (byID[updateID] ?? rateLimits).mergingSparse(update)
+        let legacyID = rateLimits.limitId ?? "codex"
+        let updateID = update.limitId ?? legacyID
+        if updateID == legacyID {
+            merged.rateLimits = rateLimits.mergingSparse(update)
+        }
+        if rateLimitsByLimitId != nil || updateID != legacyID {
+            var byID = rateLimitsByLimitId ?? [legacyID: rateLimits]
+            if let current = byID[updateID] {
+                byID[updateID] = current.mergingSparse(update)
+            } else if updateID == legacyID {
+                byID[updateID] = merged.rateLimits
+            } else {
+                byID[updateID] = update
+            }
             merged.rateLimitsByLimitId = byID
         }
         return merged
@@ -1007,6 +1016,41 @@ func defaultCodexCLIPaths(home: URL, environment: [String: String]) -> [String] 
     ].compactMap { $0 } + pathCandidates
 }
 
+func configureAppServerInput(_ handle: FileHandle) throws {
+    // Configure only a newly created pipe; late writes must not access its descriptor.
+    guard fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1) != -1 else {
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+}
+
+func writeAppServerMessage<T: Encodable>(
+    _ payload: T,
+    to handle: FileHandle,
+    encoder: JSONEncoder = JSONEncoder()
+) throws {
+    var data = try encoder.encode(payload)
+    data.append(0x0a)
+    try handle.write(contentsOf: data)
+}
+
+struct AppServerLineFramer {
+    private var buffer = Data()
+
+    mutating func consume(_ chunk: Data) -> [String] {
+        buffer.append(chunk)
+        var lines: [String] = []
+        var lineStart = buffer.startIndex
+        for index in buffer.indices where buffer[index] == 0x0a {
+            if let line = String(data: buffer[lineStart..<index], encoding: .utf8) {
+                lines.append(line)
+            }
+            lineStart = buffer.index(after: index)
+        }
+        buffer.removeSubrange(buffer.startIndex..<lineStart)
+        return lines
+    }
+}
+
 final class AppServerLimitStateReader {
     private let codexHome: URL
 
@@ -1041,7 +1085,7 @@ final class AppServerLimitStateReader {
         let decoder = JSONDecoder()
         let lock = NSLock()
         let semaphore = DispatchSemaphore(value: 0)
-        var buffer = ""
+        var lineFramer = AppServerLineFramer()
         var gate = AppServerOneShotGate()
         var state: LimitState?
         var errorCode: String?
@@ -1076,13 +1120,10 @@ final class AppServerLimitStateReader {
 
         stdout.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else {
-                return
-            }
+            guard !data.isEmpty else { return }
 
             lock.lock()
-            buffer += chunk
-            let lines = Self.drainLines(from: &buffer)
+            let lines = lineFramer.consume(data)
             lock.unlock()
 
             for line in lines {
@@ -1114,6 +1155,7 @@ final class AppServerLimitStateReader {
         }
 
         do {
+            try configureAppServerInput(stdin.fileHandleForWriting)
             try process.run()
         } catch {
             return AppServerProbeResult(state: nil, cliPath: codexCLI, errorCode: "launch_failed")
@@ -1175,18 +1217,7 @@ final class AppServerLimitStateReader {
     }
 
     private static func write<T: Encodable>(_ payload: T, to handle: FileHandle, encoder: JSONEncoder) throws {
-        var data = try encoder.encode(payload)
-        data.append(0x0a)
-        handle.write(data)
-    }
-
-    private static func drainLines(from buffer: inout String) -> [String] {
-        var lines: [String] = []
-        while let newline = buffer.firstIndex(of: "\n") {
-            lines.append(String(buffer[..<newline]))
-            buffer.removeSubrange(buffer.startIndex...newline)
-        }
-        return lines
+        try writeAppServerMessage(payload, to: handle, encoder: encoder)
     }
 
     private static func responseID(in line: String, decoder: JSONDecoder) -> Int? {
@@ -1228,7 +1259,7 @@ final class AppServerAccountUsageReader {
         let decoder = JSONDecoder()
         let lock = NSLock()
         let semaphore = DispatchSemaphore(value: 0)
-        var buffer = ""
+        var lineFramer = AppServerLineFramer()
         var gate = AppServerOneShotGate()
         var snapshot: DailyUsageSnapshot?
         var errorCode: String?
@@ -1263,11 +1294,10 @@ final class AppServerAccountUsageReader {
 
         stdout.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else { return }
+            guard !data.isEmpty else { return }
 
             lock.lock()
-            buffer += chunk
-            let lines = Self.drainLines(from: &buffer)
+            let lines = lineFramer.consume(data)
             lock.unlock()
 
             for line in lines {
@@ -1297,6 +1327,7 @@ final class AppServerAccountUsageReader {
         }
 
         do {
+            try configureAppServerInput(stdin.fileHandleForWriting)
             try process.run()
         } catch {
             return (nil, codexCLI, "launch_failed")
@@ -1363,18 +1394,7 @@ final class AppServerAccountUsageReader {
     }
 
     private static func write<T: Encodable>(_ payload: T, to handle: FileHandle, encoder: JSONEncoder) throws {
-        var data = try encoder.encode(payload)
-        data.append(0x0a)
-        handle.write(data)
-    }
-
-    private static func drainLines(from buffer: inout String) -> [String] {
-        var lines: [String] = []
-        while let newline = buffer.firstIndex(of: "\n") {
-            lines.append(String(buffer[..<newline]))
-            buffer.removeSubrange(buffer.startIndex...newline)
-        }
-        return lines
+        try writeAppServerMessage(payload, to: handle, encoder: encoder)
     }
 
     private static func responseID(in line: String, decoder: JSONDecoder) -> Int? {
@@ -1414,7 +1434,7 @@ final class AppServerLiveClient {
     private var stdin: Pipe?
     private var stdout: Pipe?
     private var stderr: Pipe?
-    private var buffer = ""
+    private var lineFramer = AppServerLineFramer()
     private var rateLimitResult: AppServerRateLimitResult?
     private var rateLimitRequestGate = RateLimitRequestGate()
     private var usageRequestGate = UsageRequestGate()
@@ -1513,7 +1533,7 @@ final class AppServerLiveClient {
         let generation = connectionGeneration
         initializationGate.begin(generation: generation)
         ready = false
-        buffer = ""
+        lineFramer = AppServerLineFramer()
 
         let newProcess = Process()
         newProcess.executableURL = codexCLI
@@ -1535,9 +1555,9 @@ final class AppServerLiveClient {
 
         newStdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else { return }
+            guard !data.isEmpty else { return }
             self?.queue.async {
-                self?.consume(chunk: chunk, generation: generation)
+                self?.consume(data: data, generation: generation)
             }
         }
         newStderr.fileHandleForReading.readabilityHandler = { handle in
@@ -1550,6 +1570,7 @@ final class AppServerLiveClient {
         }
 
         do {
+            try configureAppServerInput(newStdin.fileHandleForWriting)
             try newProcess.run()
             try write(AppServerInitializeRequest())
         } catch {
@@ -1573,10 +1594,9 @@ final class AppServerLiveClient {
         }
     }
 
-    private func consume(chunk: String, generation: Int) {
+    private func consume(data: Data, generation: Int) {
         guard generation == connectionGeneration, !stopped else { return }
-        buffer += chunk
-        for line in Self.drainLines(from: &buffer) {
+        for line in lineFramer.consume(data) {
             handle(line: line, generation: generation)
         }
     }
@@ -1828,9 +1848,7 @@ final class AppServerLiveClient {
         guard let handle = stdin?.fileHandleForWriting else {
             throw CocoaError(.fileNoSuchFile)
         }
-        var data = try encoder.encode(payload)
-        data.append(0x0a)
-        handle.write(data)
+        try writeAppServerMessage(payload, to: handle, encoder: encoder)
     }
 
     private func findCodexCLI() -> URL? {
@@ -1843,14 +1861,6 @@ final class AppServerLiveClient {
             .first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
-    private static func drainLines(from buffer: inout String) -> [String] {
-        var lines: [String] = []
-        while let newline = buffer.firstIndex(of: "\n") {
-            lines.append(String(buffer[..<newline]))
-            buffer.removeSubrange(buffer.startIndex...newline)
-        }
-        return lines
-    }
 }
 
 private struct BucketPayload: Decodable {
@@ -2176,11 +2186,29 @@ enum CodexPetSurfaceKind: Equatable {
     case mascotEffect
     case directMascot
     case oversizedAvatarOverlay
+    case asymmetricAvatarOverlay
 }
 
 struct LiveCodexPetSurface: Equatable {
     var bounds: CGRect
     var kind: CodexPetSurfaceKind
+}
+
+func preferredCodexPetSurface(
+    _ surfaces: [LiveCodexPetSurface],
+    matching reference: CGRect,
+    hasConfiguredPetSize: Bool
+) -> LiveCodexPetSurface? {
+    surfaces.filter {
+        $0.kind != .asymmetricAvatarOverlay || hasConfiguredPetSize
+    }.min {
+        // Only placeable drawing panels take precedence over compact controls.
+        if ($0.kind == .directMascot) != ($1.kind == .directMascot) {
+            return $1.kind == .directMascot
+        }
+        return distanceSquared($0.bounds.center, reference.center)
+            < distanceSquared($1.bounds.center, reference.center)
+    }
 }
 
 func isCodexPetMascotEffectWindowName(_ name: String?) -> Bool {
@@ -2223,6 +2251,45 @@ func isStrictOversizedCodexPetAvatarOverlay(
         && bounds.height > display.height
         && bounds.height >= bounds.width * 1.5
         && distanceSquared(bounds.center, mascotReference.center) <= centerTolerance * centerTolerance
+}
+
+func isAsymmetricCodexPetAvatarOverlay(
+    name: String?,
+    ownerPID: pid_t?,
+    officialCodexPIDs: Set<pid_t>,
+    layer: CGFloat,
+    bounds: CGRect,
+    mascotReference: CGRect,
+    knownDisplayBounds: [CGRect]
+) -> Bool {
+    // ChatGPT 26.917's native pet drawing window reserves asymmetric horizontal
+    // space for activity. Its 384px viewport, 80x87 minimum drawing canvas and
+    // spring overshoot produce offsets [-688, 440], hence a 1128px panel whose
+    // center is 164px left of the pet. This is a separate, tightly matched
+    // compatibility profile, not a wider tolerance for arbitrary app windows.
+    guard name == nil || name == "ChatGPT",
+          let ownerPID,
+          officialCodexPIDs.contains(ownerPID),
+          layer == 3,
+          mascotReference.width >= codexPetMinimumWidth,
+          mascotReference.width <= codexPetMaximumWidth,
+          abs(mascotReference.height - mascotReference.width * codexPetCanvasHeight / codexPetCanvasWidth) <= 1,
+          let display = knownDisplayBounds.first(where: { $0.contains(mascotReference.center) }),
+          display.width >= 384,
+          bounds.contains(mascotReference.center),
+          abs(bounds.width - 1128) <= 1,
+          bounds.height > display.height,
+          bounds.height >= bounds.width * 1.5 else {
+        return false
+    }
+    // The drawing panel may cross a display edge even though the pet does not.
+    // Match the panel to the pet's rounded canvas center, never its own center.
+    let expectedCenter = CGPoint(
+        x: mascotReference.minX + (mascotReference.width / 2).rounded() - 164,
+        y: mascotReference.minY + (mascotReference.height.rounded() / 2).rounded() - 0.5
+    )
+    return abs(bounds.midX - expectedCenter.x) <= 2
+        && abs(bounds.midY - expectedCenter.y) <= 2
 }
 
 func isOfficialCodexPetVoiceControlWindow(
@@ -2268,12 +2335,24 @@ func codexPetSurfaceKind(
     bounds: CGRect,
     mascotReference: CGRect,
     knownDisplayBounds: [CGRect] = [],
-    isOnScreen: Bool = true
+    isOnScreen: Bool = true,
+    requiresAlignedDirectSurface: Bool = false
 ) -> CodexPetSurfaceKind? {
     guard isOnScreen,
           let ownerPID,
           officialCodexPIDs.contains(ownerPID),
           layer > 0 else { return nil }
+    if isAsymmetricCodexPetAvatarOverlay(
+        name: name,
+        ownerPID: ownerPID,
+        officialCodexPIDs: officialCodexPIDs,
+        layer: layer,
+        bounds: bounds,
+        mascotReference: mascotReference,
+        knownDisplayBounds: knownDisplayBounds
+    ) {
+        return .asymmetricAvatarOverlay
+    }
     if name == "ChatGPT",
        isStrictOversizedCodexPetAvatarOverlay(
             name: name,
@@ -2336,6 +2415,12 @@ func codexPetSurfaceKind(
               aspectRatio <= 1.30,
               knownDisplayBounds.contains(where: { $0.contains(bounds.center) }) else {
             return nil
+        }
+        if requiresAlignedDirectSurface {
+            let tolerance = max(24, min(mascotReference.width, mascotReference.height) * 0.25)
+            guard distanceSquared(bounds.center, mascotReference.center) <= tolerance * tolerance else {
+                return nil
+            }
         }
         return .directMascot
     }
@@ -2654,7 +2739,7 @@ final class PetFrameReader {
                 width: mascotSize.width,
                 height: mascotSize.height
             )
-        case .oversizedAvatarOverlay:
+        case .oversizedAvatarOverlay, .asymmetricAvatarOverlay:
             if let configuredPetSize {
                 // Current ChatGPT exposes the actual pet canvas width in its
                 // read-only desktop config. The oversized Electron surface is
@@ -2662,6 +2747,9 @@ final class PetFrameReader {
                 // center, so use it only as identity evidence.
                 mascot = CGRect(origin: persistedMascotOrigin, size: configuredPetSize)
             } else {
+                // The asymmetric profile identifies the drawing window only;
+                // its center cannot reconstruct a missing pet size.
+                guard liveSurface.kind != .asymmetricAvatarOverlay else { return nil }
                 let derivedSize = modernMascotSize(
                     origin: persistedMascotOrigin,
                     effectBounds: liveEffect,
@@ -2680,7 +2768,8 @@ final class PetFrameReader {
         // The oversized Electron panel is only identity evidence. Passing its
         // full bounds into mouse hit testing would turn most desktop clicks
         // back into live geometry reads, undoing the v1.0.12 performance gate.
-        let trackingOverlay = liveSurface.kind == .oversizedAvatarOverlay ? mascot : liveEffect
+        let isDrawingPanel = liveSurface.kind == .oversizedAvatarOverlay || liveSurface.kind == .asymmetricAvatarOverlay
+        let trackingOverlay = isDrawingPanel ? mascot : liveEffect
         let interactiveControl: CGRect?
         if let liveInteractiveControlProvider {
             interactiveControl = liveInteractiveControlProvider(trackingOverlay)
@@ -2838,7 +2927,8 @@ final class PetFrameReader {
                 .map(\.processIdentifier)
         )
 
-        return windows.compactMap { window -> LiveCodexPetSurface? in
+        let hasConfiguredPetSize = currentConfiguredPetSize() != nil
+        let surfaces = windows.compactMap { window -> LiveCodexPetSurface? in
             let ownerPID = (window[kCGWindowOwnerPID as String] as? NSNumber).map { pid_t($0.int32Value) }
             let isOnScreen = (window[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true
             guard isOnScreen,
@@ -2861,14 +2951,12 @@ final class PetFrameReader {
                 bounds: bounds,
                 mascotReference: mascotReference,
                 knownDisplayBounds: knownDisplayBounds,
-                isOnScreen: isOnScreen
+                isOnScreen: isOnScreen,
+                requiresAlignedDirectSurface: hasConfiguredPetSize
             ) else { return nil }
             return LiveCodexPetSurface(bounds: bounds, kind: kind)
         }
-        .min {
-            distanceSquared($0.bounds.center, to: reference)
-                < distanceSquared($1.bounds.center, to: reference)
-        }
+        return preferredCodexPetSurface(surfaces, matching: reference, hasConfiguredPetSize: hasConfiguredPetSize)
     }
 
     private func liveCodexPetVoiceControlBounds(matching mascotEffectBounds: CGRect) -> CGRect? {
@@ -3591,7 +3679,9 @@ final class LimitRingView: NSView {
         didSet { needsDisplay = true }
     }
     var showsReadout: Bool = false {
-        didSet { needsDisplay = true }
+        didSet {
+            if showsReadout != oldValue { needsDisplay = true }
+        }
     }
     var fullSnapshotFreshness: DataFreshnessState = .waiting {
         didSet { needsDisplay = true }
@@ -3633,6 +3723,12 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private var connectionHealthMenuIsOpen = false
     private var connectionHealthMenuNeedsUpdate = false
     private var renderedConnectionHealthRows: [String]?
+    private var openDetailMenus: Set<ObjectIdentifier> = []
+    private var renderedDetailMenuRows: [ObjectIdentifier: [String]] = [:]
+    private var pendingDetailMenuRows: [ObjectIdentifier: [String]] = [:]
+    private var detailMenuUpdateScheduler: (@escaping () -> Void) -> Void = { update in
+        DispatchQueue.main.async(execute: update)
+    }
     private var showRingsItem: NSMenuItem?
     private var notificationsItem: NSMenuItem?
     private var stateTimer: Timer?
@@ -4200,6 +4296,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             keyEquivalent: ""
         )
         let detailsMenu = NSMenu(title: localized("menu.limitDetails", fallback: "Limit Details"))
+        detailsMenu.delegate = self
         detailsItem.submenu = detailsMenu
         menu.addItem(detailsItem)
         limitDetailsMenu = detailsMenu
@@ -4210,6 +4307,7 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             keyEquivalent: ""
         )
         let usageMenu = NSMenu(title: localized("menu.dailyUsage", fallback: "Daily Usage"))
+        usageMenu.delegate = self
         usageItem.submenu = usageMenu
         menu.addItem(usageItem)
         dailyUsageMenu = usageMenu
@@ -4337,7 +4435,6 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     private func updateLimitDetailsMenu() {
         guard let menu = limitDetailsMenu else { return }
-        menu.removeAllItems()
         let state = ringView.state
         var rows: [String] = []
 
@@ -4372,16 +4469,11 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         if rows.isEmpty {
             rows.append(localized("details.none", fallback: "No current limit details"))
         }
-        for row in rows {
-            let item = NSMenuItem(title: row, action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
-        }
+        updateDetailMenu(rows, in: menu)
     }
 
     private func updateDailyUsageMenu() {
         guard let menu = dailyUsageMenu else { return }
-        menu.removeAllItems()
 
         let rows: [String]
         if usageReadInFlight, dailyUsageSnapshot == nil {
@@ -4451,11 +4543,32 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             rows = [localized("usage.loading", fallback: "Loading daily usage…")]
         }
 
-        for row in rows {
-            let item = NSMenuItem(title: row, action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
+        updateDetailMenu(rows, in: menu)
+    }
+
+    private func isDetailMenu(_ menu: NSMenu) -> Bool {
+        menu === limitDetailsMenu || menu === dailyUsageMenu
+    }
+
+    private func updateDetailMenu(_ rows: [String], in menu: NSMenu) {
+        let identifier = ObjectIdentifier(menu)
+        guard renderedDetailMenuRows[identifier] != rows else {
+            pendingDetailMenuRows[identifier] = nil
+            return
         }
+        pendingDetailMenuRows[identifier] = rows
+        renderPendingDetailMenuIfClosed(menu)
+    }
+
+    private func renderPendingDetailMenuIfClosed(_ menu: NSMenu) {
+        let identifier = ObjectIdentifier(menu)
+        guard !openDetailMenus.contains(identifier),
+              let rows = pendingDetailMenuRows.removeValue(forKey: identifier) else { return }
+        menu.removeAllItems()
+        for row in rows {
+            appendDisabledMenuItem(row, to: menu)
+        }
+        renderedDetailMenuRows[identifier] = rows
     }
 
     private func currentFullSnapshotFreshness(nowUptime: TimeInterval = continuousUptime()) -> DataFreshnessState {
@@ -4491,6 +4604,10 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        if isDetailMenu(menu) {
+            renderPendingDetailMenuIfClosed(menu)
+            return
+        }
         guard menu === connectionHealthMenu else { return }
         let rows = connectionHealthMenuRows(nowUptime: continuousUptime())
         guard renderedConnectionHealthRows != rows else {
@@ -4501,11 +4618,23 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        if isDetailMenu(menu) {
+            openDetailMenus.insert(ObjectIdentifier(menu))
+            return
+        }
         guard menu === connectionHealthMenu else { return }
         connectionHealthMenuIsOpen = true
     }
 
     func menuDidClose(_ menu: NSMenu) {
+        if isDetailMenu(menu) {
+            openDetailMenus.remove(ObjectIdentifier(menu))
+            detailMenuUpdateScheduler { [weak self, weak menu] in
+                guard let self, let menu, self.isDetailMenu(menu) else { return }
+                self.renderPendingDetailMenuIfClosed(menu)
+            }
+            return
+        }
         guard menu === connectionHealthMenu else { return }
         connectionHealthMenuIsOpen = false
         guard connectionHealthMenuNeedsUpdate else { return }
@@ -4528,6 +4657,34 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         renderedConnectionHealthRows = nil
         connectionHealthMenuNeedsUpdate = true
         connectionHealthMenuIsOpen = false
+    }
+
+    func cachedPetFrameAfterDragForTesting(
+        petFrame: CGRect,
+        mouseDown: CGPoint,
+        draggedTo: CGPoint
+    ) -> CGRect? {
+        ringsVisible = true
+        currentPetFrameAppKit = petFrame
+        currentPetOverlayFrameAppKit = petFrame
+        beginDragFollowIfNeeded(at: mouseDown)
+        continueDragFollow(at: draggedTo)
+        return currentPetFrameAppKit
+    }
+
+    func installDetailMenusForTesting(limitDetails: NSMenu, dailyUsage: NSMenu) {
+        limitDetailsMenu = limitDetails
+        dailyUsageMenu = dailyUsage
+        limitDetails.delegate = self
+        dailyUsage.delegate = self
+    }
+
+    func updateDetailMenuForTesting(_ menu: NSMenu, rows: [String]) {
+        updateDetailMenu(rows, in: menu)
+    }
+
+    func setDetailMenuUpdateSchedulerForTesting(_ scheduler: @escaping (@escaping () -> Void) -> Void) {
+        detailMenuUpdateScheduler = scheduler
     }
 #endif
 
@@ -4999,9 +5156,8 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     }
 
     private func continueDragFollow(at mouse: CGPoint) {
-        if !isTrackingMouseDrag {
-            beginDragFollowIfNeeded(at: mouse)
-        }
+        // Only the mouse-down event may claim a pet drag. A drag that began
+        // elsewhere must stay unrelated when its cursor passes over the pet.
         guard isTrackingMouseDrag else { return }
         guard isPrimaryMouseButtonPressed() else {
             endDragFollow()

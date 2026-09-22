@@ -4,17 +4,18 @@ Use this procedure when a newly installed Codex Pet Limit Rings build fails its 
 
 ## Before Updating
 
-Create one timestamped backup that represents the complete pre-update state. Missing optional artifacts are left absent so rollback can restore that absence instead of inventing state.
+Create one timestamped backup that represents the complete pre-update state. Write `backup-complete-v1` only after every copy and preference export succeeds. With that marker, missing optional artifacts represent known absence. Older backups without the marker may have omitted the Skill, so a missing Skill in those backups must not remove the current Skill.
 
 ```bash
 set -euo pipefail
 
-backup="$HOME/Library/Application Support/CodexPetLimitRings/Backups/$(date +%Y%m%d-%H%M%S)"
+backup_root="$HOME/Library/Application Support/CodexPetLimitRings/Backups"
+mkdir -p "$backup_root"
+backup="$(mktemp -d "$backup_root/$(date +%Y%m%d-%H%M%S).XXXXXX")"
 app="$HOME/Applications/CodexPetLimitRings.app"
 agent="$HOME/Library/LaunchAgents/com.codex-pet.limit-rings.plist"
 skill="${CODEX_HOME:-$HOME/.codex}/skills/codex-pet-limit-rings"
 
-mkdir -p "$backup"
 if [[ -d "$app" ]]; then
   ditto "$app" "$backup/CodexPetLimitRings.app"
 fi
@@ -27,6 +28,7 @@ fi
 if [[ -d "$skill" ]]; then
   ditto "$skill" "$backup/skill"
 fi
+printf 'app launch-agent preferences skill\n' > "$backup/backup-complete-v1"
 printf 'Rollback backup: %s\n' "$backup"
 ```
 
@@ -34,13 +36,13 @@ Record the printed backup directory before continuing.
 
 ## Restore A Backup
 
-Set `backup` to the directory recorded above. The procedure first moves the current failed state into a separate timestamped directory, then restores only artifacts that existed in the pre-update backup. App bundles and Skills are restored into empty destinations with `ditto`; they are not merged into newer directories.
+Set `backup` to the directory recorded above. The procedure first moves the current failed state into a separate timestamped directory, then restores artifacts from the pre-update backup. App bundles and Skills are restored into empty destinations with `ditto`; they are not merged into newer directories. If an older backup has neither a completion marker nor a saved Skill, the current Skill is preserved because its prior state is unknown.
 
 ```bash
 set -euo pipefail
 
 backup="/path/printed/by/the/backup/command"
-failed="$HOME/Library/Application Support/CodexPetLimitRings/FailedBuilds/$(date +%Y%m%d-%H%M%S)"
+failed_root="$HOME/Library/Application Support/CodexPetLimitRings/FailedBuilds"
 app="$HOME/Applications/CodexPetLimitRings.app"
 agent="$HOME/Library/LaunchAgents/com.codex-pet.limit-rings.plist"
 skill="${CODEX_HOME:-$HOME/.codex}/skills/codex-pet-limit-rings"
@@ -48,7 +50,14 @@ gui="gui/$(id -u)"
 label="$gui/com.codex-pet.limit-rings"
 
 test -d "$backup"
-mkdir -p "$failed" "$(dirname "$app")" "$(dirname "$agent")" "$(dirname "$skill")"
+mkdir -p "$failed_root" "$(dirname "$app")" "$(dirname "$agent")" "$(dirname "$skill")"
+failed="$(mktemp -d "$failed_root/$(date +%Y%m%d-%H%M%S).XXXXXX")"
+restore_skill=false
+if [[ -d "$backup/skill" ]] || \
+  { [[ -f "$backup/backup-complete-v1" ]] && \
+    grep -qx 'app launch-agent preferences skill' "$backup/backup-complete-v1"; }; then
+  restore_skill=true
+fi
 
 if launchctl print "$label" >/dev/null 2>&1; then
   launchctl bootout "$gui" "$agent" >/dev/null
@@ -70,7 +79,7 @@ if defaults read local.codex.pet-limit-rings >/dev/null 2>&1; then
   defaults export local.codex.pet-limit-rings "$failed/preferences.plist" >/dev/null
   defaults delete local.codex.pet-limit-rings
 fi
-if [[ -d "$skill" ]]; then
+if [[ "$restore_skill" == true && -d "$skill" ]]; then
   mv "$skill" "$failed/skill"
 fi
 
@@ -85,6 +94,8 @@ if [[ -f "$backup/preferences.plist" ]]; then
 fi
 if [[ -d "$backup/skill" ]]; then
   ditto "$backup/skill" "$skill"
+elif [[ "$restore_skill" == false ]]; then
+  echo "Legacy backup has unknown Skill state; current Skill preserved."
 fi
 
 if [[ -f "$agent" ]]; then

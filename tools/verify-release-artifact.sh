@@ -137,10 +137,7 @@ if [[ -z "$minimum_os" ]]; then
   echo "artifact verification failed: minimum macOS version is unreadable" >&2
   exit 1
 fi
-if [[ -n "${EXPECTED_MIN_OS:-}" && "$minimum_os" != "$EXPECTED_MIN_OS" ]]; then
-  echo "artifact verification failed: expected minimum macOS $EXPECTED_MIN_OS, found $minimum_os" >&2
-  exit 1
-fi
+assert_minimum_os_contract "$APP/Contents/Info.plist" "$minimum_os" "${EXPECTED_MIN_OS:-}"
 
 artifact_version="$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")"
 if [[ "$artifact_version" != "$VERSION" ]]; then
@@ -149,17 +146,15 @@ if [[ "$artifact_version" != "$VERSION" ]]; then
 fi
 
 if [[ "$MODE" == "run" ]]; then
-  "$BIN" --preview "$PREVIEW" --size 164
+  run_release_fixture "$BIN" "$DIAGNOSTIC_CODEX_HOME" --preview "$PREVIEW" --size 164
   test -s "$PREVIEW"
-  mkdir -p "$DIAGNOSTIC_CODEX_HOME"
-  "$BIN" \
+  run_release_fixture "$BIN" "$DIAGNOSTIC_CODEX_HOME" \
     --diagnose \
-    --codex-home "$DIAGNOSTIC_CODEX_HOME" \
-    --state "$DIAGNOSTIC_CODEX_HOME/.codex-global-state.json" \
-    --logs "$DIAGNOSTIC_CODEX_HOME/logs.sqlite" \
     > "$DIAGNOSTICS" \
     2> "$DIAGNOSTIC_ERRORS"
   plutil -convert xml1 -o /dev/null "$DIAGNOSTICS"
+  test "$(plutil -extract appServer raw "$DIAGNOSTICS")" = ready
+  test "$(plutil -extract codexCLIVersion raw "$DIAGNOSTICS")" = 'codex-cli 0.0.0'
   if grep -aE \
     '(/Users/[^/[:space:]"]+|/home/[^/[:space:]"]+|/(private/)?var/folders/|sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|access_token|Authorization.*Bearer|account[_-]?(id|identifier)|user[_-]?(id|identifier)|email)' \
     "$DIAGNOSTICS" "$DIAGNOSTIC_ERRORS"; then

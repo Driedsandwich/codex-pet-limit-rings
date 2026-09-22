@@ -18,7 +18,7 @@ This repository packages `codex-pet-limit-rings`: a native macOS companion app t
 For app changes, verify:
 
 ```bash
-bash -n tools/*.sh
+for script in tools/*.sh; do bash -n "$script"; done
 deployment_target="$(plutil -extract LSMinimumSystemVersion raw tools/CodexPetLimitRings-Info.plist)"
 swiftc -parse-as-library -target "arm64-apple-macosx$deployment_target" tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -framework UserNotifications -lsqlite3
 tools/test-limit-rings.sh
@@ -27,7 +27,8 @@ tools/verify-release.sh
 tools/package-release.sh
 EXPECTED_MIN_OS=15.0 EXPECTED_SHA256=21d1eb306b3b3211c1911636e6cf3544bf94064af160b6f061949595b369229a ALLOW_LEGACY_LOCAL_PATHS=1 tools/smoke-release-artifact.sh 1.0.0
 EXPECTED_MIN_OS=15.0 EXPECTED_SHA256=e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273 tools/smoke-release-artifact.sh 1.0.9
-tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
+source tools/release-safety.sh
+run_release_fixture "$PWD/tmp/codex-pet-limit-rings" "$PWD/tmp/preview-home" --preview tmp/limit-rings-preview.png --size 164
 ```
 
 The `ALLOW_LEGACY_LOCAL_PATHS=1` exception is accepted by the verifier only for

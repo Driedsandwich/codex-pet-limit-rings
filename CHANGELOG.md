@@ -4,6 +4,27 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
+## 1.0.14 - 2026-09-23
+
+### ChatGPT 26.917 Pet Surface Compatibility
+
+- Recognize the asymmetric native pet drawing panel by its verified width and saved-pet-relative position, including when the transparent panel crosses a display edge. Keep the configured pet canvas as the ring and drag target.
+- Require redacted compact windows to align with the saved pet when the current desktop pet-size setting is available, and prefer a verified drawing panel over compact controls.
+- Keep the previous centered-panel and legacy compact-pet profiles, on-screen and official-process gates, read-only account access, and permission-free operation.
+
+### Specification Audit And Reliability
+
+- Isolate sparse rate-limit updates by bucket ID and prevent newly discovered buckets from inheriting Codex metadata.
+- Frame stdio messages as bytes before UTF-8 decoding so split multibyte characters cannot discard a response.
+- Use throwing pipe writes so a closed transport returns a recoverable error instead of an uncaught Objective-C exception.
+- Avoid unchanged-hover redraws, reject drags that began outside the pet, and defer asynchronous detail-menu structure updates while tracking.
+- Build and verify a staged replacement before stopping the installed app; preserve complete rollback inputs, including Skill presence, without treating older incomplete backups as proof of absence.
+- Create a LaunchServices-owned login agent for fresh ZIP installations, validate every shell script, and compare bundle and binary minimum OS in artifact checks.
+- Remove duplicate CI verification while retaining the complete package gate and pinned historical artifact checks.
+- Execute package previews and diagnostics against an offline synthetic app-server fixture and isolated state, with an explicit ready/version assertion. Keep real installed-app diagnostics as a separate compatibility check.
+
+See [the specification audit](docs/specification-audit-v1.0.14.md) for preserved contracts, evidence, and unmeasured optimization opportunities.
+
 ## 1.0.13 - 2026-08-29
 
 ### Oversized Pet Alignment
