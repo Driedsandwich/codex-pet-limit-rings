@@ -80,6 +80,75 @@ linked_agent="$FIXTURE_ROOT/linked-agent.plist"
 ln -s "$launch_agent_fixture" "$linked_agent"
 expect_rejected assert_launch_agent_contract "$linked_agent" "$launch_agent_app"
 
+escaped_agent="$FIXTURE_ROOT/escaped-agent.plist"
+escaped_app="$ALLOWED_ROOT/Space & <Pet>/CodexPetLimitRings.app"
+write_launch_agent "$escaped_agent" "$escaped_app" "$ALLOWED_ROOT/Logs & <Output>"
+test "$(plutil -extract StandardOutPath raw "$escaped_agent")" = \
+  "$ALLOWED_ROOT/Logs & <Output>/CodexPetLimitRings.log"
+
+minimum_os_plist="$FIXTURE_ROOT/minimum-os.plist"
+plutil -create xml1 "$minimum_os_plist"
+plutil -insert LSMinimumSystemVersion -string 15.0 "$minimum_os_plist"
+assert_minimum_os_contract "$minimum_os_plist" 15.0 15.0
+expect_rejected assert_minimum_os_contract "$minimum_os_plist" 26.0 26.0
+expect_rejected assert_minimum_os_contract "$minimum_os_plist" 15.0 26.0
+expect_rejected assert_minimum_os_contract "$minimum_os_plist" "" 15.0
+plutil -remove LSMinimumSystemVersion "$minimum_os_plist"
+expect_rejected assert_minimum_os_contract "$minimum_os_plist" 15.0 15.0
+
+# These defaults functions exist only inside test subshells; no user preference
+# domain, installed app, LaunchAgent, or Skill is changed by the fixtures.
+backup_app="$FIXTURE_ROOT/installed/CodexPetLimitRings.app"
+backup_skill="$FIXTURE_ROOT/installed/skill"
+mkdir -p "$backup_app" "$backup_skill"
+printf 'app\n' > "$backup_app/sentinel"
+printf 'skill\n' > "$backup_skill/SKILL.md"
+complete_backup="$FIXTURE_ROOT/complete-backup"
+mkdir "$complete_backup"
+(
+  defaults() {
+    case "$1" in
+      read) return 0 ;;
+      export) printf 'preferences\n' > "$3" ;;
+      *) return 1 ;;
+    esac
+  }
+  backup_installation_state "$complete_backup" "$backup_app" "$launch_agent_fixture" "$backup_skill"
+)
+cmp "$backup_app/sentinel" "$complete_backup/CodexPetLimitRings.app/sentinel"
+cmp "$backup_skill/SKILL.md" "$complete_backup/skill/SKILL.md"
+cmp "$launch_agent_fixture" "$complete_backup/com.codex-pet.limit-rings.plist"
+test -s "$complete_backup/preferences.plist"
+grep -qx 'app launch-agent preferences skill' "$complete_backup/backup-complete-v1"
+expect_rejected backup_installation_state "$complete_backup" "$backup_app" "$launch_agent_fixture" "$backup_skill"
+
+absent_backup="$FIXTURE_ROOT/absent-backup"
+mkdir "$absent_backup"
+(
+  defaults() { return 1; }
+  backup_installation_state "$absent_backup" "$FIXTURE_ROOT/absent.app" \
+    "$FIXTURE_ROOT/absent.plist" "$FIXTURE_ROOT/absent-skill"
+)
+grep -qx 'app launch-agent preferences skill' "$absent_backup/backup-complete-v1"
+test ! -e "$absent_backup/skill"
+test ! -e "$absent_backup/preferences.plist"
+
+failed_backup="$FIXTURE_ROOT/failed-backup"
+mkdir "$failed_backup"
+(
+  defaults() { [[ "$1" == read ]]; }
+  expect_rejected backup_installation_state "$failed_backup" "$backup_app" "$launch_agent_fixture" "$backup_skill"
+)
+test ! -e "$failed_backup/backup-complete-v1"
+
+failed_copy_backup="$FIXTURE_ROOT/failed-copy-backup"
+mkdir "$failed_copy_backup"
+(
+  ditto() { return 1; }
+  expect_rejected backup_installation_state "$failed_copy_backup" "$backup_app" "$launch_agent_fixture" "$backup_skill"
+)
+test ! -e "$failed_copy_backup/backup-complete-v1"
+
 assert_release_version 1.0.10
 expect_rejected assert_release_version ""
 expect_rejected assert_release_version 1.0

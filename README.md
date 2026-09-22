@@ -52,8 +52,8 @@ This fork preserves the original companion-app boundary and MIT license while ex
 
 | Area | Current contract |
 | --- | --- |
-| Pet surfaces | Official `com.openai.codex` process; legacy overlay, named mascot effect, tightly bounded compact layer-three pet surface, or strictly gated modern oversized avatar surface |
-| Placement | Live size and display tracking; v1.0.13 uses the bounded desktop pet-width setting and verified 192-by-208 canvas ratio for oversized-surface alignment |
+| Pet surfaces | Official `com.openai.codex` process; legacy overlay, named mascot effect, bounded compact pet, centered oversized panel, or the separately verified ChatGPT 26.917 asymmetric drawing panel |
+| Placement | Live size and display tracking; bounded desktop pet-width setting and 192-by-208 canvas ratio; transparent drawing-panel bounds never become the interaction target |
 | Pet controls | Complete circular, mouse-through rings while preserving normal and contracted ChatGPT pet voice-control hit targets |
 | Limit updates | Long-lived experimental app-server connection, sparse live updates, 120-second full-snapshot watchdog, five-second read timeout, and bounded reconnect |
 | Performance | Cached file identity, changed-state parsing off the main thread, cached click hit testing, and a 10 fps animation only while effectively visible |
@@ -62,6 +62,8 @@ This fork preserves the original companion-app boundary and MIT license while ex
 Ordinary ChatGPT windows, Activity Stack, notifications, unrelated processes, off-display surfaces, and unsupported geometry are rejected as pet evidence. The app does not request Screen Recording or Accessibility permission and does not capture pixels while detecting the pet.
 
 See [docs/limit-rings.md](docs/limit-rings.md) for the complete tested surface, rendering, lifecycle, and recovery contract.
+
+The [v1.0.14 specification audit](docs/specification-audit-v1.0.14.md) records the legacy contracts, current compatibility evidence, corrected defects, and verification limits.
 
 ## Data And Privacy
 
@@ -134,13 +136,13 @@ tools/build-limit-rings.sh
 Run regression tests and the complete local/CI release gate:
 
 ```bash
-bash -n tools/*.sh
+for script in tools/*.sh; do bash -n "$script"; done
 tools/test-limit-rings.sh
 bash tools/test-release-safety.sh
 tools/verify-release.sh
 ```
 
-Render a static preview from the current source:
+Render a static preview from the current source using synthetic offline data:
 
 ```bash
 deployment_target="$(plutil -extract LSMinimumSystemVersion raw tools/CodexPetLimitRings-Info.plist)"
@@ -151,7 +153,8 @@ swiftc -parse-as-library \
   -framework AppKit \
   -framework UserNotifications \
   -lsqlite3
-tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
+source tools/release-safety.sh
+run_release_fixture "$PWD/tmp/codex-pet-limit-rings" "$PWD/tmp/preview-home" --preview tmp/limit-rings-preview.png --size 164
 ```
 
 Build an ad-hoc-signed release ZIP and checksum under ignored `dist/`:

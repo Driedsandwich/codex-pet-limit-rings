@@ -34,7 +34,7 @@ if [[ "$minimum_os" != "$DEPLOYMENT_TARGET" ]]; then
   echo "release packaging failed: expected minimum macOS $DEPLOYMENT_TARGET, found ${minimum_os:-unreadable}" >&2
   exit 1
 fi
-"$BIN" --preview "$PREVIEW" --size 164
+run_release_fixture "$BIN" "$STAGE/preview-home" --preview "$PREVIEW" --size 164
 test -s "$PREVIEW"
 
 assert_safe_release_path "$ARCHIVE" "$DIST" "$(basename "$ARCHIVE")"

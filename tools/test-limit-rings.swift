@@ -22,8 +22,11 @@ struct LimitRingsTests {
             try testLayerThreeDirectPetSurfaceCompatibility()
             try testDesktopPetSizeContract()
             try testOversizedAvatarOverlayCompatibility()
+            try testAsymmetricAvatarOverlayCompatibility()
             try testPetStateSnapshotCacheAndMouseDownGate()
             try testRingAnimationVisibilityGate()
+            try testHoverReadoutInvalidatesOnlyOnTransitions()
+            try testUnrelatedDragCannotStartWhenCrossingPet()
             try testModernPetSurfaceDerivesMascotSizeWithoutHistory()
             try testModernPetSurfaceTracksRuntimeSizeChanges()
             try testPetVoiceControlClearance()
@@ -35,6 +38,10 @@ struct LimitRingsTests {
             try testLiveAppServerInitializationDeadlineDoesNotCutOffRead()
             try testOptionalShortWindowDisappearsAndReturns()
             try testSparseRateLimitMergePreservesSnapshotMetadata()
+            try testSparseRateLimitMergeKeepsBucketsIsolated()
+            try testAppServerLineFramerPreservesSplitUTF8()
+            try testAppServerMessageWriteFramesAndThrows()
+            try testAppServerMessageBrokenPeerThrows()
             try testFullSnapshotWatchdogAndSingleInFlightGate()
             try testManualRefreshRecoveryAndGenerationSafety()
             try testUsageRequestGateCoalescesAndRejectsLateResponses()
@@ -48,6 +55,7 @@ struct LimitRingsTests {
             try testUsageMilestonesAndConnectionHealth()
             try testConnectionHealthMenuRebuildGate()
             try testConnectionHealthDelegateCallbacksPreserveMenuStructure()
+            try testDetailMenusDeferStructuralUpdatesWhileOpen()
             try testCompatibilityFreshnessAndSafeFailureReasons()
             try testUnknownAndOptionalProtocolFieldsRemainCompatible()
             try testNotificationTransitionsAndDedupe()
@@ -655,6 +663,206 @@ struct LimitRingsTests {
         )
     }
 
+    private static func testAsymmetricAvatarOverlayCompatibility() throws {
+        let root = try temporaryDirectory(named: "asymmetric-avatar-overlay")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent(".codex-global-state.json")
+        let configURL = root.appendingPathComponent("config.toml")
+        let officialPID: pid_t = 123
+        let mainDisplay = CGRect(x: 0, y: 0, width: 1_470, height: 956)
+        let leftDisplay = CGRect(x: -1_920, y: 0, width: 1_920, height: 1_080)
+        let mainOrigin = CGPoint(x: 94, y: 136)
+        let mainOverlay = CGRect(x: -594, y: -855, width: 1_128, height: 2_069)
+        let minimumSize = CGSize(width: 80, height: 80 * codexPetCanvasHeight / codexPetCanvasWidth)
+        let reference = CGRect(origin: mainOrigin, size: minimumSize)
+
+        func writeState(origin: CGPoint, display: CGRect, open: Bool = true, historicalSize: CGSize? = nil) throws {
+            var bounds: [String: Any] = [
+                "x": origin.x,
+                "y": origin.y,
+                "displayId": 3,
+                "displayBounds": [
+                    "x": display.minX, "y": display.minY,
+                    "width": display.width, "height": display.height
+                ]
+            ]
+            if let historicalSize {
+                bounds["byDisplayId"] = [
+                    "3": ["mascot": ["width": historicalSize.width, "height": historicalSize.height]]
+                ]
+            }
+            let payload: [String: Any] = [
+                "electron-avatar-overlay-open": open,
+                "electron-avatar-overlay-bounds": bounds
+            ]
+            try JSONSerialization.data(withJSONObject: payload).write(to: stateURL)
+        }
+
+        func panel(origin: CGPoint, width: CGFloat) -> CGRect {
+            let height = width * codexPetCanvasHeight / codexPetCanvasWidth
+            let center = CGPoint(
+                x: origin.x + (width / 2).rounded() - 164,
+                y: origin.y + (height.rounded() / 2).rounded() - 0.5
+            )
+            return CGRect(x: center.x - 564, y: center.y - 1_034.5, width: 1_128, height: 2_069)
+        }
+
+        var candidateSurface: CGRect? = mainOverlay
+        var candidateName: String?
+        var classifiedKind: CodexPetSurfaceKind?
+        var providerCalls = 0
+        func makeReader(configPath: URL?) -> PetFrameReader {
+            PetFrameReader(
+                globalStatePath: stateURL,
+                petSizeConfigPath: configPath,
+                livePetSurfaceProvider: { mascotReference, displays in
+                    providerCalls += 1
+                    classifiedKind = nil
+                    guard let surface = candidateSurface else { return nil }
+                    let kind = codexPetSurfaceKind(
+                        name: candidateName,
+                        ownerPID: officialPID,
+                        officialCodexPIDs: [officialPID],
+                        layer: 3,
+                        bounds: surface,
+                        mascotReference: mascotReference,
+                        knownDisplayBounds: displays,
+                        requiresAlignedDirectSurface: configPath != nil
+                    )
+                    classifiedKind = kind
+                    return kind.map { LiveCodexPetSurface(bounds: surface, kind: $0) }
+                },
+                liveInteractiveControlProvider: { _ in nil }
+            )
+        }
+
+        let cases: [(String, CGPoint, CGRect, CGFloat, CGRect)] = [
+            ("measured main display", mainOrigin, mainDisplay, 80, mainOverlay),
+            ("measured left display", CGPoint(x: -1_682, y: 717), leftDisplay, 80,
+             CGRect(x: -2_370, y: -274, width: 1_128, height: 2_069)),
+            ("160-pixel canvas", mainOrigin, mainDisplay, 160, panel(origin: mainOrigin, width: 160)),
+            ("224-pixel canvas", mainOrigin, mainDisplay, 224, panel(origin: mainOrigin, width: 224))
+        ]
+        let reader = makeReader(configPath: configURL)
+        for (label, origin, display, width, surface) in cases {
+            try writeState(origin: origin, display: display)
+            try "[desktop]\navatar-overlay-mascot-width-px = \(Int(width))\n"
+                .write(to: configURL, atomically: true, encoding: .utf8)
+            candidateSurface = surface
+            for name in [nil, "ChatGPT"] as [String?] {
+                candidateName = name
+                guard let frames = reader.readPetFramesTopLeft(requireLiveOverlay: true) else {
+                    throw LimitRingsTestError.failed("expected classification through placement for \(label), name \(name ?? "redacted")")
+                }
+                let expectedMascot = CGRect(
+                    origin: origin,
+                    size: CGSize(width: width, height: width * codexPetCanvasHeight / codexPetCanvasWidth)
+                )
+                try expect(classifiedKind == .asymmetricAvatarOverlay, "expected the asymmetric profile for \(label)")
+                try expect(frames.mascot == expectedMascot, "expected saved origin and configured size for \(label)")
+                try expect(frames.overlay == expectedMascot, "expected pet-sized mouse tracking for \(label)")
+                try expect(frames.usedLiveOverlay, "expected live-window-gated placement for \(label)")
+            }
+        }
+
+        let rejected: [(String, String?, pid_t?, CGFloat, CGRect, [CGRect], Bool)] = [
+            ("foreign PID", nil, 456, 3, mainOverlay, [mainDisplay], true),
+            ("missing PID", nil, nil, 3, mainOverlay, [mainDisplay], true),
+            ("wrong layer", nil, officialPID, 2, mainOverlay, [mainDisplay], true),
+            ("off Space", nil, officialPID, 3, mainOverlay, [mainDisplay], false),
+            ("empty title", "", officialPID, 3, mainOverlay, [mainDisplay], true),
+            ("different title", "ChatGPT Settings", officialPID, 3, mainOverlay, [mainDisplay], true),
+            ("wrong width", nil, officialPID, 3, mainOverlay.insetBy(dx: -2, dy: 0), [mainDisplay], true),
+            ("horizontal mismatch", nil, officialPID, 3, mainOverlay.offsetBy(dx: 20, dy: 0), [mainDisplay], true),
+            ("vertical mismatch", nil, officialPID, 3, mainOverlay.offsetBy(dx: 0, dy: 20), [mainDisplay], true),
+            ("missing display", nil, officialPID, 3, mainOverlay, [], true),
+            ("wrong display", nil, officialPID, 3, mainOverlay, [leftDisplay], true),
+            ("ordinary input", "ChatGPT", officialPID, 3, CGRect(x: 40, y: 100, width: 720, height: 84), [mainDisplay], true),
+            ("redacted input", nil, officialPID, 3, CGRect(x: 40, y: 100, width: 720, height: 84), [mainDisplay], true),
+            ("insufficient height", nil, officialPID, 3, mainOverlay.insetBy(dx: 0, dy: 600), [mainDisplay], true)
+        ]
+        for (label, name, pid, layer, surface, displays, onScreen) in rejected {
+            try expect(
+                codexPetSurfaceKind(
+                    name: name,
+                    ownerPID: pid,
+                    officialCodexPIDs: [officialPID],
+                    layer: layer,
+                    bounds: surface,
+                    mascotReference: reference,
+                    knownDisplayBounds: displays,
+                    isOnScreen: onScreen,
+                    requiresAlignedDirectSurface: true
+                ) == nil,
+                "expected asymmetric surface rejection for \(label)"
+            )
+        }
+
+        try writeState(origin: mainOrigin, display: mainDisplay)
+        try "[desktop]\navatar-overlay-mascot-width-px = 80\n"
+            .write(to: configURL, atomically: true, encoding: .utf8)
+        candidateName = nil
+        let compactControl = CGRect(x: 600, y: 300, width: 64, height: 64)
+        candidateSurface = compactControl
+        try expect(
+            reader.readPetFramesTopLeft(requireLiveOverlay: true) == nil,
+            "expected a distant redacted 64-by-64 control not to attract configured pet rings"
+        )
+        try expect(
+            codexPetSurfaceKind(
+                name: nil,
+                ownerPID: officialPID,
+                officialCodexPIDs: [officialPID],
+                layer: 3,
+                bounds: compactControl,
+                mascotReference: reference,
+                knownDisplayBounds: [mainDisplay],
+                requiresAlignedDirectSurface: false
+            ) == .directMascot,
+            "expected legacy compact surfaces to retain stale-state compatibility without configured alignment"
+        )
+        let nearbyPet = CGRect(x: reference.midX - 32 + 12, y: reference.midY - 32, width: 64, height: 64)
+        candidateSurface = nearbyPet
+        let directFrames = reader.readPetFramesTopLeft(requireLiveOverlay: true)
+        try expect(classifiedKind == .directMascot, "expected an aligned compact pet to remain accepted")
+        try expect(directFrames?.mascot == nearbyPet, "expected an aligned direct pet to use live geometry")
+
+        let asymmetricCandidate = LiveCodexPetSurface(bounds: mainOverlay, kind: .asymmetricAvatarOverlay)
+        let directCandidate = LiveCodexPetSurface(bounds: nearbyPet, kind: .directMascot)
+        let candidates = [asymmetricCandidate, directCandidate]
+        try expect(
+            preferredCodexPetSurface(candidates, matching: reference, hasConfiguredPetSize: false) == directCandidate,
+            "expected an unplaceable asymmetric panel not to suppress a valid direct pet without configured size"
+        )
+        try expect(
+            preferredCodexPetSurface(candidates, matching: reference, hasConfiguredPetSize: true) == asymmetricCandidate,
+            "expected a placeable asymmetric panel to take precedence over a closer compact surface"
+        )
+        try expect(
+            preferredCodexPetSurface([asymmetricCandidate], matching: reference, hasConfiguredPetSize: false) == nil,
+            "expected an asymmetric-only candidate list to remain empty without configured pet size"
+        )
+
+        candidateSurface = mainOverlay
+        try writeState(origin: mainOrigin, display: mainDisplay, open: false)
+        let callsBeforeClose = providerCalls
+        try expect(reader.readPetFramesTopLeft(requireLiveOverlay: true) == nil, "expected closed state to hide asymmetric rings")
+        try expect(providerCalls == callsBeforeClose, "expected closed state to stop before live classification")
+
+        try writeState(origin: mainOrigin, display: mainDisplay)
+        candidateSurface = nil
+        try expect(reader.readPetFramesTopLeft(requireLiveOverlay: true) == nil, "expected a missing live panel to hide asymmetric rings")
+
+        candidateSurface = mainOverlay
+        try writeState(origin: mainOrigin, display: mainDisplay, historicalSize: minimumSize)
+        let unconfiguredReader = makeReader(configPath: nil)
+        try expect(unconfiguredReader.readPetFramesTopLeft(requireLiveOverlay: true) == nil, "expected no asymmetric placement without configured pet size")
+        try expect(
+            classifiedKind == .asymmetricAvatarOverlay,
+            "expected missing-config rejection after genuine classification, even with matching historical geometry"
+        )
+    }
+
     private static func testDesktopPetSizeContract() throws {
         let size = codexDesktopPetSize(fromTOML: """
         [features]
@@ -777,6 +985,48 @@ struct LimitRingsTests {
         try expect(
             !ringAnimationShouldRun(ringsVisible: true, hasLivePetFrame: true, panelVisible: true, reduceMotion: true),
             "expected Reduced Motion to stop the animation timer and redraws"
+        )
+    }
+
+    private static func testHoverReadoutInvalidatesOnlyOnTransitions() throws {
+        let view = LimitRingView(frame: CGRect(x: 0, y: 0, width: 180, height: 180))
+        var displayInvalidations = 0
+        // An unordered view's needsDisplay getter depends on window visibility.
+        // Observe the real setter instead, without opening a test window.
+        let observation = view.observe(\.needsDisplay, options: [.prior]) { _, change in
+            if change.isPrior { displayInvalidations += 1 }
+        }
+        defer { observation.invalidate() }
+
+        for _ in 0..<120 { view.showsReadout = false }
+        try expect(displayInvalidations == 0, "expected desktop mouse movement outside the pet not to redraw")
+        view.showsReadout = true
+        try expect(displayInvalidations == 1, "expected entering the pet to show readouts immediately")
+        for _ in 0..<120 { view.showsReadout = true }
+        try expect(displayInvalidations == 1, "expected movement within the same hover region not to redraw")
+        view.showsReadout = false
+        try expect(displayInvalidations == 2, "expected leaving the pet to hide readouts immediately")
+        for _ in 0..<120 { view.showsReadout = false }
+        try expect(displayInvalidations == 2, "expected a static reduced-motion view to stay static during unrelated mouse movement")
+    }
+
+    private static func testUnrelatedDragCannotStartWhenCrossingPet() throws {
+        let root = try temporaryDirectory(named: "unrelated-drag")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = LimitRingsApp(config: LimitRingsConfig(
+            codexHome: root,
+            globalStatePath: root.appendingPathComponent("missing-state.json"),
+            logsPath: root.appendingPathComponent("missing.sqlite")
+        ))
+        let petFrame = CGRect(x: 500, y: 500, width: 100, height: 100)
+        let afterDrag = app.cachedPetFrameAfterDragForTesting(
+            petFrame: petFrame,
+            mouseDown: CGPoint(x: -1_000, y: -1_000),
+            draggedTo: CGPoint(x: petFrame.midX, y: petFrame.midY)
+        )
+        try expect(
+            afterDrag == petFrame,
+            "expected a drag that began elsewhere to preserve the cached pet frame instead of starting a live refresh"
         )
     }
 
@@ -1216,6 +1466,106 @@ struct LimitRingsTests {
         try expect(merged.rateLimits.secondary?.usedPercent == 40, "expected sparse merge to preserve secondary window")
         try expect(merged.rateLimits.credits?.balance == "10", "expected sparse merge to preserve nullable account metadata")
         try expect(merged.rateLimitResetCredits?.availableCount == 2, "expected snapshot-only reset credits to remain")
+    }
+
+    private static func testSparseRateLimitMergeKeepsBucketsIsolated() throws {
+        let decoder = JSONDecoder()
+        let main = try decoder.decode(AppServerRateLimitSnapshot.self, from: Data(#"{"limitId":"codex","limitName":"Codex","primary":{"usedPercent":20,"windowDurationMins":300,"resetsAt":4102444800},"secondary":{"usedPercent":40,"windowDurationMins":10080,"resetsAt":4102444800},"credits":{"hasCredits":true,"unlimited":false,"balance":"10"}}"#.utf8))
+        let review = try decoder.decode(AppServerRateLimitSnapshot.self, from: Data(#"{"limitId":"review","limitName":"Code Review","primary":{"usedPercent":25,"windowDurationMins":10080,"resetsAt":4102444800}}"#.utf8))
+        let reviewUpdate = try decoder.decode(AppServerRateLimitSnapshot.self, from: Data(#"{"limitId":"review","primary":{"usedPercent":99}}"#.utf8))
+        let mainUpdate = try decoder.decode(AppServerRateLimitSnapshot.self, from: Data(#"{"limitId":"codex","primary":{"usedPercent":45}}"#.utf8))
+        let anonymousUpdate = try decoder.decode(AppServerRateLimitSnapshot.self, from: Data(#"{"primary":{"usedPercent":50}}"#.utf8))
+
+        let maps: [[String: AppServerRateLimitSnapshot]?] = [nil, ["codex": main], ["codex": main, "review": review]]
+        for map in maps {
+            let full = AppServerRateLimitResult(
+                rateLimits: main,
+                rateLimitsByLimitId: map,
+                rateLimitResetCredits: AppServerRateLimitResetCreditsSummary(availableCount: 2)
+            )
+            let merged = full.mergingSparse(reviewUpdate)
+            let state = merged.toLimitState(observedAt: Date())
+            try expect(merged.rateLimits.limitId == "codex", "expected an additional-bucket notification not to rename the legacy bucket")
+            try expect(state?.primary?.remainingPercent == 80, "expected additional usage not to alter the main ring")
+            try expect(state?.secondary?.remainingPercent == 60, "expected additional usage not to alter the weekly ring")
+            try expect(state?.additional.first?.primary?.remainingPercent == 1, "expected additional usage to update even without a prior multi-bucket map")
+            try expect(state?.additional.first?.secondary == nil, "expected a new additional bucket not to inherit the main weekly window")
+            try expect(state?.additional.first?.credits == nil, "expected a new additional bucket not to inherit main credits")
+            try expect(state?.additional.first?.primary?.windowMinutes == map?["review"]?.primary?.windowDurationMins, "expected only the same bucket's metadata to survive a sparse update")
+            try expect(state?.resetCreditsAvailable == 2, "expected snapshot-only reset-credit metadata to remain intact")
+
+            let updatedMain = full.mergingSparse(mainUpdate)
+            try expect(updatedMain.toLimitState(observedAt: Date())?.primary?.remainingPercent == 55, "expected an explicit main-bucket update to reach the main ring")
+            try expect(updatedMain.rateLimits.primary?.windowDurationMins == 300, "expected same-bucket sparse metadata to remain intact")
+            let anonymous = full.mergingSparse(anonymousUpdate)
+            try expect(anonymous.toLimitState(observedAt: Date())?.primary?.remainingPercent == 50, "expected a legacy notification without limitId to update the legacy bucket")
+
+            let replayed = [reviewUpdate, mainUpdate, anonymousUpdate].reduce(full) { $0.mergingSparse($1) }
+            try expect(replayed.toLimitState(observedAt: Date())?.primary?.remainingPercent == 50, "expected buffered main updates to win independently of additional updates")
+            try expect(replayed.toLimitState(observedAt: Date())?.additional.first?.primary?.remainingPercent == 1, "expected buffered additional updates to remain in their own bucket")
+        }
+    }
+
+    private static func testAppServerLineFramerPreservesSplitUTF8() throws {
+        let rateLine = #"{"id":2,"result":{"rateLimits":{"limitId":"codex","limitName":"コード制限","primary":{"usedPercent":20}}}}"#
+        let rateBytes = Data((rateLine + "\n").utf8)
+        for split in 1..<rateBytes.count {
+            var framer = AppServerLineFramer()
+            try expect(framer.consume(rateBytes.prefix(split)).isEmpty, "expected partial JSON bytes to wait for a newline")
+            let lines = framer.consume(rateBytes.suffix(rateBytes.count - split))
+            try expect(lines == [rateLine], "expected every byte split, including inside UTF-8, to preserve the response")
+            try expect(AppServerLimitStateReader.decodeRateLimitState(from: lines[0])?.primary?.remainingPercent == 80, "expected a framed response to remain decodable by the rate-limit reader")
+        }
+
+        let usageLine = #"{"id":2,"result":{"dailyUsageBuckets":[],"summary":{"lifetimeTokens":123},"futureLabel":"利用状況"}}"#
+        let notificationLine = #"{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"review","limitName":"レビュー","primary":{"usedPercent":50}}}}"#
+        var framer = AppServerLineFramer()
+        let first = framer.consume(Data((rateLine + "\n" + usageLine + "\n" + String(notificationLine.prefix(12))).utf8))
+        try expect(first == [rateLine, usageLine], "expected multiple complete responses to drain while retaining a partial notification")
+        try expect(AppServerAccountUsageReader.decodeAccountUsage(from: first[1])?.summary?.lifetimeTokens == 123, "expected the shared framer to preserve usage responses")
+        let remaining = framer.consume(Data((String(notificationLine.dropFirst(12)) + "\n").utf8))
+        try expect(remaining == [notificationLine], "expected the next chunk to complete the live notification exactly")
+        try expect(framer.consume(Data()).isEmpty, "expected drained frames not to be replayed")
+
+        let malformed = Data([0xff, 0x0a]) + Data((rateLine + "\n").utf8)
+        try expect(framer.consume(malformed) == [rateLine], "expected invalid UTF-8 in one complete frame not to discard the following valid frame")
+    }
+
+    private static func testAppServerMessageWriteFramesAndThrows() throws {
+        let pipe = Pipe()
+        defer { try? pipe.fileHandleForReading.close() }
+        try configureAppServerInput(pipe.fileHandleForWriting)
+        try writeAppServerMessage(["method": "initialized"], to: pipe.fileHandleForWriting)
+        try pipe.fileHandleForWriting.close()
+        let written = try pipe.fileHandleForReading.readToEnd() ?? Data()
+        try expect(written == Data("{\"method\":\"initialized\"}\n".utf8), "expected exactly one JSON message followed by one newline")
+
+        var receivedError = false
+        do {
+            try writeAppServerMessage(["method": "initialized"], to: pipe.fileHandleForWriting)
+        } catch {
+            receivedError = true
+        }
+        try expect(receivedError, "expected writing to a closed handle to return a catchable error without terminating the app")
+    }
+
+    private static func testAppServerMessageBrokenPeerThrows() throws {
+        let pipe = Pipe()
+        defer { try? pipe.fileHandleForWriting.close() }
+        try configureAppServerInput(pipe.fileHandleForWriting)
+        try pipe.fileHandleForReading.close()
+
+        var receivedError: NSError?
+        do {
+            try writeAppServerMessage(["method": "initialized"], to: pipe.fileHandleForWriting)
+        } catch {
+            receivedError = error as NSError
+        }
+        let posixError = (receivedError?.userInfo[NSUnderlyingErrorKey] as? NSError) ?? receivedError
+        try expect(
+            posixError?.domain == NSPOSIXErrorDomain && posixError?.code == Int(POSIXErrorCode.EPIPE.rawValue),
+            "expected a disconnected app-server pipe to return EPIPE instead of terminating the app with SIGPIPE"
+        )
     }
 
     private static func testFullSnapshotWatchdogAndSingleInFlightGate() throws {
@@ -1713,6 +2063,73 @@ struct LimitRingsTests {
             menu.numberOfItems > 0 && menu.item(at: 0)?.title != "sentinel",
             "expected menuNeedsUpdate to perform the deferred semantic row render"
         )
+    }
+
+    private static func testDetailMenusDeferStructuralUpdatesWhileOpen() throws {
+        let root = try temporaryDirectory(named: "detail-menu-lifecycle")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = LimitRingsApp(config: LimitRingsConfig(
+            codexHome: root,
+            globalStatePath: root.appendingPathComponent("missing-state.json"),
+            logsPath: root.appendingPathComponent("missing.sqlite")
+        ))
+        let details = NSMenu(title: "Limit Details")
+        let usage = NSMenu(title: "Daily Usage")
+        var scheduledUpdates: [() -> Void] = []
+        app.setDetailMenuUpdateSchedulerForTesting { scheduledUpdates.append($0) }
+        app.installDetailMenusForTesting(limitDetails: details, dailyUsage: usage)
+
+        for menu in [details, usage] {
+            try expect(menu.delegate === app, "expected both detail submenus to report tracking lifecycle")
+            app.updateDetailMenuForTesting(menu, rows: ["Initial"])
+            let initialItem = menu.item(at: 0)
+            app.updateDetailMenuForTesting(menu, rows: ["Initial"])
+            try expect(menu.item(at: 0) === initialItem, "expected unchanged rows to preserve item identity")
+
+            app.menuWillOpen(menu)
+            app.updateDetailMenuForTesting(menu, rows: ["Changed", "New detail"])
+            app.menuNeedsUpdate(menu)
+            try expect(
+                menu.numberOfItems == 1 && menu.item(at: 0) === initialItem,
+                "expected an open submenu to preserve rows and accessibility focus during async updates"
+            )
+            app.menuDidClose(menu)
+            try expect(menu.item(at: 0) === initialItem, "expected close callbacks not to synchronously mutate structure")
+            app.menuNeedsUpdate(menu)
+            try expect(menu.items.map(\.title) == ["Changed", "New detail"], "expected the pending rows at the next safe update")
+
+            let changedItem = menu.item(at: 0)
+            app.menuWillOpen(menu)
+            app.updateDetailMenuForTesting(menu, rows: ["Transient"])
+            app.updateDetailMenuForTesting(menu, rows: ["Changed", "New detail"])
+            app.menuDidClose(menu)
+            app.menuNeedsUpdate(menu)
+            try expect(menu.item(at: 0) === changedItem, "expected a reverted pending update not to rebuild unchanged rows")
+        }
+
+        app.menuWillOpen(details)
+        app.updateDetailMenuForTesting(details, rows: ["Deferred details"])
+        app.updateDetailMenuForTesting(usage, rows: ["Independent usage"])
+        try expect(usage.items.map(\.title) == ["Independent usage"], "expected each submenu to track its own open state")
+        app.menuDidClose(details)
+        try expect(!scheduledUpdates.isEmpty, "expected close to schedule a deferred update")
+        // Drain the captured next-turn work explicitly: NSPanel initialization
+        // can leave this command-line harness unable to pump DispatchQueue.main.
+        app.menuWillOpen(details)
+        let previousUpdates = scheduledUpdates
+        scheduledUpdates.removeAll()
+        previousUpdates.forEach { $0() }
+        try expect(details.items.map(\.title) == ["Changed", "New detail"], "expected queued close work not to mutate a reopened menu")
+        app.menuDidClose(details)
+        app.menuWillOpen(usage)
+        app.updateDetailMenuForTesting(usage, rows: ["Deferred usage"])
+        app.menuDidClose(usage)
+        try expect(usage.items.map(\.title) == ["Independent usage"], "expected usage close to preserve structure synchronously")
+        let finalUpdates = scheduledUpdates
+        scheduledUpdates.removeAll()
+        withExtendedLifetime(app) { finalUpdates.forEach { $0() } }
+        try expect(details.items.map(\.title) == ["Deferred details"], "expected close to apply pending rows asynchronously")
+        try expect(usage.items.map(\.title) == ["Deferred usage"], "expected usage close to apply its pending rows asynchronously")
     }
 
     private static func testCompatibilityFreshnessAndSafeFailureReasons() throws {

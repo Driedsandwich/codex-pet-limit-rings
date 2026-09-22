@@ -84,6 +84,28 @@ directly from launchd; current macOS and ChatGPT builds can leave that path in
 an app-server initialization loop even though a LaunchServices-owned launch is
 healthy.
 
+ChatGPT 26.917 also uses a separate asymmetric native drawing panel. Require its
+verified 1128px width, saved-pet-relative center (164px left, within 2px), official
+on-screen layer-three process, bounded configured pet size, and a pet center on a
+known display. Its transparent bounds may cross a display edge. Do not reconstruct
+the pet size from this panel; without valid desktop size settings, reject this
+profile before selecting another candidate. Prefer verified drawing panels over
+compact controls, and require compact redacted candidates to align with the saved
+pet when configured size is available. See `docs/limit-rings.md` for the distinct
+legacy and current profile contracts.
+
+Keep sparse updates isolated by limit ID, with no main-bucket metadata inherited
+by a newly discovered bucket. Frame stdio as newline-delimited bytes before UTF-8
+decoding so a split multibyte character cannot discard a response. Unchanged hover
+state must not request redraws, unrelated drags must not start pet tracking, and
+menu structure updates must wait until menu tracking ends.
+
+Use throwing writes for the app-server pipe. Package previews and artifact
+diagnostics use the bundled offline fixture plus isolated state, not real account
+data. They assert the fixture CLI version and a ready result. Run a separate
+installed-app diagnostic for actual desktop/CLI compatibility; do not present
+fixture execution as proof of live service compatibility.
+
 ## Editing Workflow
 
 When changing behavior or visuals:
@@ -93,7 +115,7 @@ When changing behavior or visuals:
 3. Run:
 
 ```bash
-bash -n tools/*.sh
+for script in tools/*.sh; do bash -n "$script"; done
 deployment_target="$(plutil -extract LSMinimumSystemVersion raw tools/CodexPetLimitRings-Info.plist)"
 swiftc -parse-as-library -target "arm64-apple-macosx$deployment_target" tools/codex-pet-limit-rings.swift -o tmp/codex-pet-limit-rings -framework AppKit -framework UserNotifications -lsqlite3
 tools/test-limit-rings.sh
@@ -101,7 +123,8 @@ bash tools/test-release-safety.sh
 tools/verify-release.sh
 EXPECTED_MIN_OS=15.0 EXPECTED_SHA256=21d1eb306b3b3211c1911636e6cf3544bf94064af160b6f061949595b369229a ALLOW_LEGACY_LOCAL_PATHS=1 tools/smoke-release-artifact.sh 1.0.0
 EXPECTED_MIN_OS=15.0 EXPECTED_SHA256=e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273 tools/smoke-release-artifact.sh 1.0.9
-tmp/codex-pet-limit-rings --preview tmp/limit-rings-preview.png --size 164
+source tools/release-safety.sh
+run_release_fixture "$PWD/tmp/codex-pet-limit-rings" "$PWD/tmp/preview-home" --preview tmp/limit-rings-preview.png --size 164
 ```
 
 The verifier accepts `ALLOW_LEGACY_LOCAL_PATHS=1` only for v1.0.0 at the fixed

@@ -13,22 +13,32 @@ OLD_BIN="$OLD_APP/Contents/MacOS/CodexLimitAura"
 OLD_AGENT="$AGENT_DIR/com.codex-pet.limit-aura.plist"
 GUI_TARGET="gui/$(id -u)"
 BACKUP_ROOT="$HOME/Library/Application Support/CodexPetLimitRings/Backups"
+SKILL="${CODEX_HOME:-$HOME/.codex}/skills/codex-pet-limit-rings"
 
 assert_safe_app_path "$APP" "CodexPetLimitRings.app" "$HOME/Applications"
 assert_safe_app_path "$OLD_APP" "CodexLimitAura.app" "$HOME/Applications"
 
-if [[ -d "$APP" || -f "$AGENT" ]]; then
-  backup="$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S)"
-  mkdir -p "$backup"
-  if [[ -d "$APP" ]]; then
-    cp -a "$APP" "$backup/CodexPetLimitRings.app"
+# Build and verify before touching the running installation. Failed compilation
+# or signing leaves the installed app and its LaunchAgent untouched.
+mkdir -p "$ROOT/tmp"
+assert_safe_release_root "$ROOT/tmp"
+INSTALL_STAGE="$(mktemp -d "$ROOT/tmp/install.XXXXXX")"
+STAGED_APP="$INSTALL_STAGE/CodexPetLimitRings.app"
+STAGED_AGENT="$INSTALL_STAGE/com.codex-pet.limit-rings.plist"
+cleanup() {
+  if [[ -d "$INSTALL_STAGE" && ! -L "$INSTALL_STAGE" ]]; then
+    safe_remove_release_path "$INSTALL_STAGE" "$ROOT/tmp" "$(basename "$INSTALL_STAGE")"
   fi
-  if [[ -f "$AGENT" ]]; then
-    cp -a "$AGENT" "$backup/com.codex-pet.limit-rings.plist"
-  fi
-  defaults export local.codex.pet-limit-rings "$backup/preferences.plist" >/dev/null 2>&1 || true
-  echo "Backed up existing installation at $backup"
-fi
+}
+trap cleanup EXIT
+"$ROOT/tools/build-limit-rings.sh" "$STAGED_APP" >/dev/null
+codesign --verify --deep --strict "$STAGED_APP"
+write_launch_agent "$STAGED_AGENT" "$APP" "$HOME/Library/Logs"
+
+mkdir -p "$BACKUP_ROOT"
+backup="$(mktemp -d "$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S).XXXXXX")"
+backup_installation_state "$backup" "$APP" "$AGENT" "$SKILL"
+echo "Backed up existing installation at $backup"
 
 mkdir -p "$(dirname "$APP")" "$AGENT_DIR" "$HOME/Library/Logs"
 
@@ -41,34 +51,11 @@ pkill -TERM -f "CodexLimitAura.app/Contents/MacOS/CodexLimitAura" >/dev/null 2>&
 rm -f "$OLD_AGENT"
 safe_remove_app_bundle "$OLD_APP" "CodexLimitAura.app" "$HOME/Applications"
 
-"$ROOT/tools/build-limit-rings.sh" "$APP" >/dev/null
+safe_remove_app_bundle "$APP" "CodexPetLimitRings.app" "$HOME/Applications"
+ditto "$STAGED_APP" "$APP"
 codesign --verify --deep --strict "$APP"
 
-cat > "$AGENT" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.codex-pet.limit-rings</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/usr/bin/open</string>
-    <string>-W</string>
-    <string>$APP</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>LimitLoadToSessionType</key>
-  <string>Aqua</string>
-  <key>StandardOutPath</key>
-  <string>$HOME/Library/Logs/CodexPetLimitRings.log</string>
-  <key>StandardErrorPath</key>
-  <string>$HOME/Library/Logs/CodexPetLimitRings.err.log</string>
-</dict>
-</plist>
-PLIST
+cp "$STAGED_AGENT" "$AGENT"
 assert_launch_agent_contract "$AGENT" "$APP"
 
 launchctl bootstrap "$GUI_TARGET" "$AGENT"

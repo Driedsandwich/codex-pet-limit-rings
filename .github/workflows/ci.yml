@@ -20,9 +20,8 @@ jobs:
           - macos-26
     steps:
       - uses: actions/checkout@v6
-      - name: Verify build, tests, privacy, and release metadata
-        run: tools/verify-release.sh
-      - name: Build and verify the current package candidate
+      # package-release runs verify-release, including tests and privacy gates.
+      - name: Verify source and build the current package candidate
         run: tools/package-release.sh
       - name: Smoke-test the pinned v1.0.0 provenance baseline
         env:

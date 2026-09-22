@@ -35,7 +35,9 @@ if ! contains_local_absolute_path "$PATH_SCAN_FIXTURE" >/dev/null; then
   exit 1
 fi
 
-bash -n "$ROOT"/tools/*.sh
+for script in "$ROOT"/tools/*.sh; do
+  bash -n "$script"
+done
 plutil -lint "$PLIST" >/dev/null
 plutil -lint "$ROOT/resources/en.lproj/Localizable.strings" >/dev/null
 plutil -lint "$ROOT/resources/ja.lproj/Localizable.strings" >/dev/null
@@ -74,7 +76,7 @@ EXPECTED_MIN_OS="$DEPLOYMENT_TARGET" \
   "$PATH_SCAN_ZIP" \
   "$PATH_SCAN_CHECKSUM"
 
-"$APP_BIN" --preview "$PREVIEW" --size 164
+run_release_fixture "$APP_BIN" "$VERIFY_ROOT/preview-home" --preview "$PREVIEW" --size 164
 test -s "$PREVIEW"
 
 minimum_os="$(vtool -show-build "$APP_BIN" | awk '$1 == "minos" { print $2; exit }')"

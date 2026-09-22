@@ -26,7 +26,7 @@ tools/package-release.sh
 
 Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The published v1.0.13 package is ad-hoc signed and not notarized. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, confirm English and Japanese localization resources are present, and confirm the re-extracted binary contains no local build-machine path.
 
-The packaging command verifies its checksum before returning. To repeat that check manually, run it from `dist/` so the relative archive name resolves:
+The packaging command verifies its checksum before returning. Automated previews and diagnostics use `tools/fixture-codex-app-server.py` with isolated state and assert the fixture version and ready response; they do not access the real account. The Runtime Gate below separately checks the live installed app. To repeat the checksum check manually, run it from `dist/` so the relative archive name resolves:
 
 ```bash
 (cd dist && shasum -a 256 -c CodexPetLimitRings-v1.0.13-macos-arm64.zip.sha256)

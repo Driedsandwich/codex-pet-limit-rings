@@ -194,6 +194,88 @@ assert_file_sha256() {
   fi
 }
 
+assert_minimum_os_contract() {
+  local plist="$1"
+  local binary_minimum_os="$2"
+  local expected_minimum_os="${3:-}"
+  local plist_minimum_os
+  plist_minimum_os="$(plutil -extract LSMinimumSystemVersion raw "$plist")" || return 1
+  if [[ -z "$binary_minimum_os" || "$plist_minimum_os" != "$binary_minimum_os" ||
+        ( -n "$expected_minimum_os" && "$binary_minimum_os" != "$expected_minimum_os" ) ]]; then
+    release_safety_fail "Info.plist, binary, and expected minimum macOS must agree"
+    return 1
+  fi
+}
+
+run_release_fixture() {
+  local binary="$1"
+  local isolated_home="$2"
+  shift 2
+  local fixture_cli
+  fixture_cli="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixture-codex-app-server.py"
+  if [[ ! -x "$fixture_cli" ]]; then
+    release_safety_fail "offline app-server fixture is missing"
+    return 1
+  fi
+  mkdir -p "$isolated_home"
+  CODEX_PET_LIMIT_RINGS_CODEX_CLI="$fixture_cli" "$binary" \
+    --codex-home "$isolated_home" \
+    --state "$isolated_home/.codex-global-state.json" \
+    --logs "$isolated_home/logs.sqlite" \
+    "$@"
+}
+
+backup_installation_state() {
+  local backup="$1"
+  local app="$2"
+  local agent="$3"
+  local skill="$4"
+  if [[ ! -d "$backup" || -L "$backup" || -n "$(ls -A "$backup")" ]]; then
+    release_safety_fail "installation backup must be a new empty directory"
+    return 1
+  fi
+  if [[ -L "$app" || -L "$agent" || -L "$skill" ]]; then
+    release_safety_fail "installation backup sources must not be symbolic links"
+    return 1
+  fi
+  if [[ ( -e "$app" && ! -d "$app" ) || ( -e "$agent" && ! -f "$agent" ) ||
+        ( -e "$skill" && ! -d "$skill" ) ]]; then
+    release_safety_fail "installation backup sources have unexpected file types"
+    return 1
+  fi
+  if [[ -d "$app" ]]; then
+    ditto "$app" "$backup/CodexPetLimitRings.app" || return 1
+  fi
+  if [[ -f "$agent" ]]; then
+    cp -a "$agent" "$backup/com.codex-pet.limit-rings.plist" || return 1
+  fi
+  if defaults read local.codex.pet-limit-rings >/dev/null 2>&1; then
+    defaults export local.codex.pet-limit-rings "$backup/preferences.plist" >/dev/null || return 1
+  fi
+  if [[ -d "$skill" ]]; then
+    ditto "$skill" "$backup/skill" || return 1
+  fi
+  # Missing artifacts represent known absence only after every copy succeeds.
+  printf 'app launch-agent preferences skill\n' > "$backup/backup-complete-v1"
+}
+
+write_launch_agent() {
+  local agent="$1"
+  local app="$2"
+  local log_directory="$3"
+  plutil -create xml1 "$agent" || return 1
+  plutil -insert Label -string com.codex-pet.limit-rings "$agent" || return 1
+  plutil -insert ProgramArguments -array "$agent" || return 1
+  plutil -insert ProgramArguments.0 -string /usr/bin/open "$agent" || return 1
+  plutil -insert ProgramArguments.1 -string -W "$agent" || return 1
+  plutil -insert ProgramArguments.2 -string "$app" "$agent" || return 1
+  plutil -insert RunAtLoad -bool true "$agent" || return 1
+  plutil -insert LimitLoadToSessionType -string Aqua "$agent" || return 1
+  plutil -insert StandardOutPath -string "$log_directory/CodexPetLimitRings.log" "$agent" || return 1
+  plutil -insert StandardErrorPath -string "$log_directory/CodexPetLimitRings.err.log" "$agent" || return 1
+  assert_launch_agent_contract "$agent" "$app"
+}
+
 assert_launch_agent_contract() {
   local agent="$1"
   local app="$2"

@@ -41,7 +41,9 @@ set -euo pipefail
 
 version=1.0.13
 release_dir="${release_dir:-$HOME/Downloads/CodexPetLimitRings-v$version}"
-backup="$HOME/Library/Application Support/CodexPetLimitRings/Backups/$(date +%Y%m%d-%H%M%S)"
+backup_root="$HOME/Library/Application Support/CodexPetLimitRings/Backups"
+mkdir -p "$backup_root"
+backup="$(mktemp -d "$backup_root/$(date +%Y%m%d-%H%M%S).XXXXXX")"
 app="$HOME/Applications/CodexPetLimitRings.app"
 agent="$HOME/Library/LaunchAgents/com.codex-pet.limit-rings.plist"
 skill="${CODEX_HOME:-$HOME/.codex}/skills/codex-pet-limit-rings"
@@ -70,13 +72,24 @@ fi
 if [[ -d "$app" ]]; then
   mv "$app" "$backup/CodexPetLimitRings.app"
 fi
+printf '%s\n' 'app launch-agent preferences skill' > "$backup/backup-complete-v1"
 ditto "$release_dir/CodexPetLimitRings.app" "$app"
-if [[ -f "$agent" ]]; then
-  launchctl bootstrap "$gui" "$agent"
-  launchctl kickstart -k "$gui/com.codex-pet.limit-rings"
-else
-  open "$app"
-fi
+# Write the current LaunchServices contract for both fresh and existing installs.
+# plutil escapes paths safely, including spaces, ampersands, and quotes.
+mkdir -p "$(dirname "$agent")" "$HOME/Library/Logs"
+plutil -create xml1 "$agent"
+plutil -insert Label -string com.codex-pet.limit-rings "$agent"
+plutil -insert ProgramArguments -json '[]' "$agent"
+plutil -insert ProgramArguments.0 -string /usr/bin/open "$agent"
+plutil -insert ProgramArguments.1 -string -W "$agent"
+plutil -insert ProgramArguments.2 -string "$app" "$agent"
+plutil -insert RunAtLoad -bool true "$agent"
+plutil -insert LimitLoadToSessionType -string Aqua "$agent"
+plutil -insert StandardOutPath -string "$HOME/Library/Logs/CodexPetLimitRings.log" "$agent"
+plutil -insert StandardErrorPath -string "$HOME/Library/Logs/CodexPetLimitRings.err.log" "$agent"
+plutil -lint "$agent"
+launchctl bootstrap "$gui" "$agent"
+launchctl kickstart -k "$gui/com.codex-pet.limit-rings"
 printf 'Rollback backup: %s\n' "$backup"
 ```
 
