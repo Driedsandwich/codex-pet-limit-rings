@@ -28,13 +28,13 @@ When ChatGPT exits or the pet is closed, minimized, or moved off the active Spac
 
 ## Quick Start
 
-The published v1.0.13 app supports Apple silicon on macOS 15 and later. Its ZIP SHA-256 is:
+The published v1.0.14 app supports Apple silicon on macOS 15 and later. Its ZIP SHA-256 is:
 
 ```text
-dd0ef8c31df8af0c5e3dbc2b5fcf614cfc4942f8191aec3f164eabbbc8c76a78
+7e4ebe4b43fd9b73ea7668fa5394136736db58b30c95ed633aac09f6bf66bb47
 ```
 
-Download the ZIP and checksum from the [v1.0.13 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.13). The bundle is ad-hoc signed and not notarized, so verify the checksum and signature before approving a first launch.
+Download the ZIP and checksum from the [v1.0.14 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.14). The bundle is ad-hoc signed and not notarized, so verify the checksum and signature before approving a first launch.
 
 For the complete download, checksum, backup, LaunchAgent, diagnostic, and rollback procedure, follow [Verified Installation And Rollback](docs/verified-installation.md).
 
@@ -163,14 +163,14 @@ Build an ad-hoc-signed release ZIP and checksum under ignored `dist/`:
 tools/package-release.sh
 ```
 
-CI builds and verifies the current source, smoke-tests pinned v1.0.0 as the long-term provenance baseline, and separately smoke-tests pinned v1.0.9 as the published compatibility baseline. Only v1.0.0 receives its digest-bound pre-v1.0.4 local-path exception.
+CI builds and verifies the current source, smoke-tests pinned v1.0.0 as the long-term provenance baseline, pinned v1.0.9 as the compatibility baseline, and the latest published v1.0.14 artifact. Only v1.0.0 receives its digest-bound pre-v1.0.4 local-path exception. Artifact execution uses synthetic account data; installed-app diagnostics separately verify the real CLI.
 
 Inspect the latest published artifact without replacing the installed app:
 
 ```bash
 EXPECTED_MIN_OS=15.0 \
-EXPECTED_SHA256=dd0ef8c31df8af0c5e3dbc2b5fcf614cfc4942f8191aec3f164eabbbc8c76a78 \
-  tools/smoke-release-artifact.sh 1.0.13 --inspect-only
+EXPECTED_SHA256=7e4ebe4b43fd9b73ea7668fa5394136736db58b30c95ed633aac09f6bf66bb47 \
+  tools/smoke-release-artifact.sh 1.0.14 --inspect-only
 ```
 
 ## Give This Repository To Codex
@@ -210,7 +210,7 @@ experiments/weather-pets/            separate earlier weather-pet experiment
 - [CHANGELOG.md](CHANGELOG.md) records the complete release-by-release history.
 - [PUBLICATION_RECORD.md](PUBLICATION_RECORD.md) records publication provenance and release evidence.
 - [docs/downstream-scope.md](docs/downstream-scope.md) records the upstream baseline and downstream-only compatibility line.
-- [docs/release-notes-v1.0.13.md](docs/release-notes-v1.0.13.md) records the current release scope, artifact identity, and rollback target.
+- [docs/release-notes-v1.0.14.md](docs/release-notes-v1.0.14.md) records the current release scope, artifact identity, and rollback target.
 
 ## License
 

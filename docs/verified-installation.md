@@ -1,12 +1,12 @@
 # Verified Installation And Rollback
 
-This runbook installs the published Codex Pet Limit Rings v1.0.13 app without trusting an unverified download. It preserves an existing app, LaunchAgent, preferences, and local Skill in one timestamped backup before replacement.
+This runbook installs the published Codex Pet Limit Rings v1.0.14 app without trusting an unverified download. It preserves an existing app, LaunchAgent, preferences, and local Skill in one timestamped backup before replacement.
 
 ## Published Artifact
 
-- Release: [v1.0.13](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.13)
-- Release target: `acf93391a925999e28df7888ece97e65fc26e92a`
-- ZIP SHA-256: `dd0ef8c31df8af0c5e3dbc2b5fcf614cfc4942f8191aec3f164eabbbc8c76a78`
+- Release: [v1.0.14](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.14)
+- Release target: `c53255e47155930b8ebc83f97aa836a9d1b5ebf1`
+- ZIP SHA-256: `7e4ebe4b43fd9b73ea7668fa5394136736db58b30c95ed633aac09f6bf66bb47`
 - Platform: Apple silicon `arm64`, macOS `15.0` or later
 - Signing: ad-hoc signed and not notarized
 
@@ -15,8 +15,8 @@ This runbook installs the published Codex Pet Limit Rings v1.0.13 app without tr
 ```bash
 set -euo pipefail
 
-version=1.0.13
-expected_sha=dd0ef8c31df8af0c5e3dbc2b5fcf614cfc4942f8191aec3f164eabbbc8c76a78
+version=1.0.14
+expected_sha=7e4ebe4b43fd9b73ea7668fa5394136736db58b30c95ed633aac09f6bf66bb47
 release_dir="$HOME/Downloads/CodexPetLimitRings-v$version"
 base_url="https://github.com/Driedsandwich/codex-pet-limit-rings/releases/download/v$version"
 
@@ -39,7 +39,7 @@ The following procedure changes the installed app. Run it only after reviewing t
 ```bash
 set -euo pipefail
 
-version=1.0.13
+version=1.0.14
 release_dir="${release_dir:-$HOME/Downloads/CodexPetLimitRings-v$version}"
 backup_root="$HOME/Library/Application Support/CodexPetLimitRings/Backups"
 mkdir -p "$backup_root"

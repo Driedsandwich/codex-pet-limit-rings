@@ -24,12 +24,12 @@ Build the release package and checksum:
 tools/package-release.sh
 ```
 
-Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The published v1.0.13 package is ad-hoc signed and not notarized. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, confirm English and Japanese localization resources are present, and confirm the re-extracted binary contains no local build-machine path.
+Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The published v1.0.14 package is ad-hoc signed and not notarized. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, confirm English and Japanese localization resources are present, and confirm the re-extracted binary contains no local build-machine path.
 
 The packaging command verifies its checksum before returning. Automated previews and diagnostics use `tools/fixture-codex-app-server.py` with isolated state and assert the fixture version and ready response; they do not access the real account. The Runtime Gate below separately checks the live installed app. To repeat the checksum check manually, run it from `dist/` so the relative archive name resolves:
 
 ```bash
-(cd dist && shasum -a 256 -c CodexPetLimitRings-v1.0.13-macos-arm64.zip.sha256)
+(cd dist && shasum -a 256 -c CodexPetLimitRings-v1.0.14-macos-arm64.zip.sha256)
 ```
 
 ## Runtime Gate
@@ -51,6 +51,23 @@ Confirm the menu-bar source is `App Server`, `Cached`, or `Local`, full limit de
 - Confirm no local paths, logs, state files, screenshots with private content, or `tmp/` artifacts are included.
 - Create the fork, push, upstream PR, and downstream release as separate operations.
 - Record the fork URL, commit/tag, CI result, PR URL/status, and known limitations.
+- After publication and a fixed-SHA download check, update the latest-release CI pin and current download instructions without changing historical evidence.
+
+### Published v1.0.14 Evidence
+
+- Release target: `c53255e47155930b8ebc83f97aa836a9d1b5ebf1`; tree equals the tested PR head.
+- [PR #50](https://github.com/Driedsandwich/codex-pet-limit-rings/pull/50) merged; [main CI](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/35799230479) passed on macOS 15 and 26.
+- Release: [v1.0.14](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.14).
+- ZIP SHA-256: `7e4ebe4b43fd9b73ea7668fa5394136736db58b30c95ed633aac09f6bf66bb47`.
+- Version/build: `1.0.14 / 23`; arm64, minimum macOS 15.0, ad-hoc signed and not notarized.
+- The installed bundle matched the tested package; the separate live diagnostic reported ready app-server and a readable pet frame, with notifications off.
+- Fixed-SHA re-download and all artifact gates passed, with synthetic account data for preview/diagnostics. A re-signed ZIP with only its plist minimum OS changed was correctly rejected.
+
+```bash
+EXPECTED_MIN_OS=15.0 \
+EXPECTED_SHA256=7e4ebe4b43fd9b73ea7668fa5394136736db58b30c95ed633aac09f6bf66bb47 \
+  tools/smoke-release-artifact.sh 1.0.14
+```
 
 ### Published v1.0.13 Evidence
 
