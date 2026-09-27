@@ -10,7 +10,9 @@ With Codex 26.924.22138 and CLI 0.158.0-alpha.2.1, live diagnostics before and a
 
 ## Distribution
 
-The verified candidate is version `1.0.15`, build `24`, for Apple silicon `arm64` on macOS `15.0` or later. It is ad-hoc signed and not notarized. Candidate ZIP SHA-256: `1f9ea91cb9602e5d6710db0011b3ff0240cab0027b3c1d47fca3101602eca1aa`. Publication identity and results should be added after release.
+The [v1.0.15 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.15) was published on 2026-09-27 at 14:04:21 UTC (release ID `397672145`), as the latest non-draft, non-prerelease release. Annotated tag `8fd40c324ffba7112596268656bbdd9a71a6cb27` targets merge commit `d8ec339acb458d39d5cc3263044bf597db85947d` (tree `559a8aa53c27d471f1a956432183131643e441cc`). [PR #52](https://github.com/Driedsandwich/codex-pet-limit-rings/pull/52) merged, and [PR CI](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/36324135834) and [main CI](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/36324300943) passed on macOS 15 and 26.
+
+The ZIP contains version `1.0.15`, build `24`, for Apple silicon `arm64` on macOS `15.0` or later. It is ad-hoc signed and not notarized. ZIP SHA-256: `1f9ea91cb9602e5d6710db0011b3ff0240cab0027b3c1d47fca3101602eca1aa`. The GitHub asset digest matched, and a re-download from the public release passed the fixed-SHA artifact smoke test.
 
 ## Rollback
 

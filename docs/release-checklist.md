@@ -1,5 +1,19 @@
 # Release Checklist
 
+## Published v1.0.15 Evidence
+
+- [PR #52](https://github.com/Driedsandwich/codex-pet-limit-rings/pull/52) merged at `d8ec339acb458d39d5cc3263044bf597db85947d` (tree `559a8aa53c27d471f1a956432183131643e441cc`); its head was `21c1e0298e9804f1933e2ce7112d7a11bb5c738c`.
+- [PR CI](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/36324135834) and [main CI](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/36324300943) succeeded on macOS 15 and 26.
+- [v1.0.15 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.15) was published on 2026-09-27 at 14:04:21 UTC (release ID `397672145`); it is latest, non-draft, and non-prerelease. Annotated tag `8fd40c324ffba7112596268656bbdd9a71a6cb27` targets the merge commit above.
+- ZIP SHA-256: `1f9ea91cb9602e5d6710db0011b3ff0240cab0027b3c1d47fca3101602eca1aa`; the GitHub asset digest matched. Version/build `1.0.15 / 24`, arm64, minimum macOS 15.0, ad-hoc signed and not notarized.
+- The published ZIP was downloaded again and passed the fixed-SHA artifact smoke test. The installed bundle matched the candidate; earlier live diagnostics reported ready app-server and readable pet frame, and the user confirmed visible rings.
+
+```bash
+EXPECTED_MIN_OS=15.0 \
+EXPECTED_SHA256=1f9ea91cb9602e5d6710db0011b3ff0240cab0027b3c1d47fca3101602eca1aa \
+  tools/smoke-release-artifact.sh 1.0.15
+```
+
 ## Source And Scope
 
 - Confirm the branch is based on the intended upstream commit.
@@ -24,12 +38,12 @@ Build the release package and checksum:
 tools/package-release.sh
 ```
 
-Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The published v1.0.14 package is ad-hoc signed and not notarized. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, confirm English and Japanese localization resources are present, and confirm the re-extracted binary contains no local build-machine path.
+Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The published v1.0.15 package is ad-hoc signed and not notarized. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, confirm English and Japanese localization resources are present, and confirm the re-extracted binary contains no local build-machine path.
 
 The packaging command verifies its checksum before returning. Automated previews and diagnostics use `tools/fixture-codex-app-server.py` with isolated state and assert the fixture version and ready response; they do not access the real account. The Runtime Gate below separately checks the live installed app. To repeat the checksum check manually, run it from `dist/` so the relative archive name resolves:
 
 ```bash
-(cd dist && shasum -a 256 -c CodexPetLimitRings-v1.0.14-macos-arm64.zip.sha256)
+(cd dist && shasum -a 256 -c CodexPetLimitRings-v1.0.15-macos-arm64.zip.sha256)
 ```
 
 ## Runtime Gate

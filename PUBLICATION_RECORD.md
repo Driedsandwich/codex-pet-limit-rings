@@ -1,8 +1,22 @@
 # Publication Record
 
-status: v1.0.14-released
+status: v1.0.15-released
 
-## Current Release: v1.0.14 (2026-09-23)
+## Current Release: v1.0.15 (2026-09-27)
+
+- Compatibility PR: [#52](https://github.com/Driedsandwich/codex-pet-limit-rings/pull/52), merged.
+- Release target: `d8ec339acb458d39d5cc3263044bf597db85947d`.
+- Target tree: `559a8aa53c27d471f1a956432183131643e441cc`, identical to tested PR head `21c1e0298e9804f1933e2ce7112d7a11bb5c738c`.
+- PR CI [36324135834](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/36324135834) and main CI [36324300943](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/36324300943) passed on macOS 15 and 26.
+- Annotated tag object: `8fd40c324ffba7112596268656bbdd9a71a6cb27`; its target is the release commit above. Author, committer, and tagger use the public noreply identity.
+- Public latest Release: [v1.0.15](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.15), published September 27, 2026; not a draft or prerelease.
+- ZIP SHA-256: `1f9ea91cb9602e5d6710db0011b3ff0240cab0027b3c1d47fca3101602eca1aa`; the verified local artifact, GitHub asset digest, and re-downloaded public bytes agree.
+- Apple silicon `arm64`, macOS `15.0` in Info.plist and Mach-O, version `1.0.15`, build `24`; ad-hoc signed, not notarized.
+- The fixed-SHA published-artifact gate passed checksum, archive allowlist, signature, architecture, version, deployment-target, localization, local-path, synthetic-preview, and fixture-diagnostic checks. The existing verified package was published without rebuilding it.
+- The installed bundle matched every file of that package. Before and after installation, a separate real-CLI diagnostic reported app-server ready, current rate-limit and usage data, and a readable pet frame on Codex 26.924.22138 / CLI 0.158.0-alpha.2.1; notifications remained off. The operator confirmed correct ring display.
+- The fix adds discovery of the relocated bundled CLI while retaining legacy paths, explicit overrides, and Homebrew/PATH fallbacks. It does not change pet matching, account access, recovery policy, or the shared CLI wrapper. See [release notes](docs/release-notes-v1.0.15.md).
+
+## Release: v1.0.14 (2026-09-23)
 
 - Runtime/specification PR: [#50](https://github.com/Driedsandwich/codex-pet-limit-rings/pull/50), merged.
 - Release target: `c53255e47155930b8ebc83f97aa836a9d1b5ebf1`.
@@ -42,6 +56,7 @@ status: v1.0.14-released
 - v1.0.12 release merge commit: `08754b592841bf0bfccd885fb688e8deec4342e9`
 - v1.0.13 release merge commit: `acf93391a925999e28df7888ece97e65fc26e92a`
 - v1.0.14 release merge commit: `c53255e47155930b8ebc83f97aa836a9d1b5ebf1`
+- v1.0.15 release merge commit: `d8ec339acb458d39d5cc3263044bf597db85947d`
 
 ## Publication Targets
 
