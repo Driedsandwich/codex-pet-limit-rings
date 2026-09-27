@@ -637,7 +637,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.14"
+    var version = "1.0.15"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -1007,9 +1007,13 @@ func defaultCodexCLIPaths(home: URL, environment: [String: String]) -> [String] 
     return [
         environment["CODEX_PET_LIMIT_RINGS_CODEX_CLI"],
         environment["CODEX_CLI"],
+        "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
         "/Applications/ChatGPT.app/Contents/Resources/codex",
+        home.appendingPathComponent("Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex").path,
         home.appendingPathComponent("Applications/ChatGPT.app/Contents/Resources/codex").path,
+        "/Applications/Codex.app/Contents/Resources/codex-cli/bin/codex",
         "/Applications/Codex.app/Contents/Resources/codex",
+        home.appendingPathComponent("Applications/Codex.app/Contents/Resources/codex-cli/bin/codex").path,
         home.appendingPathComponent("Applications/Codex.app/Contents/Resources/codex").path,
         "/opt/homebrew/bin/codex",
         "/usr/local/bin/codex"

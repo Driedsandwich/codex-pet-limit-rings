@@ -16,7 +16,7 @@ enum LimitRingsTestError: Error, CustomStringConvertible {
 struct LimitRingsTests {
     static func main() {
         do {
-            try testCodexCLIPathsCoverCurrentChatGPTAppAndPath()
+            try testCodexCLIPathSelection()
             try testPetLifecycleRequiresLiveOverlay()
             try testModernPetSurfaceSchemaRequiresNamedLiveWindow()
             try testLayerThreeDirectPetSurfaceCompatibility()
@@ -77,17 +77,42 @@ struct LimitRingsTests {
         }
     }
 
-    private static func testCodexCLIPathsCoverCurrentChatGPTAppAndPath() throws {
+    private static func testCodexCLIPathSelection() throws {
         let paths = defaultCodexCLIPaths(
             home: URL(fileURLWithPath: "/Users/tester"),
-            environment: ["PATH": "/custom/bin:/usr/bin"]
+            environment: [
+                "CODEX_PET_LIMIT_RINGS_CODEX_CLI": "/override/first/codex",
+                "CODEX_CLI": "/override/second/codex",
+                "PATH": "/custom/bin:/usr/bin"
+            ]
         )
-        try expect(
-            paths.contains("/Applications/ChatGPT.app/Contents/Resources/codex"),
-            "expected the current ChatGPT.app bundled Codex CLI path"
-        )
-        try expect(paths.contains("/custom/bin/codex"), "expected PATH-based Codex CLI discovery")
-        try expect(paths.contains("/opt/homebrew/bin/codex"), "expected Homebrew Codex CLI discovery")
+        func selected(_ executablePaths: Set<String>) -> String? {
+            paths.first { executablePaths.contains($0) }
+        }
+
+        let bundles = [
+            "/Applications/ChatGPT.app",
+            "/Users/tester/Applications/ChatGPT.app",
+            "/Applications/Codex.app",
+            "/Users/tester/Applications/Codex.app"
+        ]
+        for bundle in bundles {
+            let newPath = bundle + "/Contents/Resources/codex-cli/bin/codex"
+            let oldPath = bundle + "/Contents/Resources/codex"
+            try expect(selected([newPath]) == newPath, "expected new bundled CLI to be discoverable at \(bundle)")
+            try expect(selected([oldPath]) == oldPath, "expected legacy bundled CLI to remain discoverable at \(bundle)")
+            try expect(selected([newPath, oldPath]) == newPath, "expected new bundled CLI before legacy CLI at \(bundle)")
+        }
+
+        let firstBundle = bundles[0] + "/Contents/Resources/codex-cli/bin/codex"
+        let laterBundle = bundles[2] + "/Contents/Resources/codex-cli/bin/codex"
+        try expect(selected([firstBundle, laterBundle]) == firstBundle, "expected ChatGPT before Codex app")
+        try expect(selected(["/override/first/codex", firstBundle]) == "/override/first/codex", "expected primary override before bundles")
+        try expect(selected(["/override/second/codex", firstBundle]) == "/override/second/codex", "expected secondary override before bundles")
+        try expect(selected(["/override/first/codex", "/override/second/codex"]) == "/override/first/codex", "expected primary override before secondary override")
+        try expect(selected(["/opt/homebrew/bin/codex"]) == "/opt/homebrew/bin/codex", "expected Homebrew CLI fallback")
+        try expect(selected(["/usr/local/bin/codex"]) == "/usr/local/bin/codex", "expected Intel Homebrew CLI fallback")
+        try expect(selected(["/custom/bin/codex"]) == "/custom/bin/codex", "expected PATH-based CLI fallback")
     }
 
     private static func testAppServerOneShotPhaseAndDeadlineContract() throws {

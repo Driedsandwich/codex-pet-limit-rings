@@ -38,6 +38,8 @@ Download the ZIP and checksum from the [v1.0.14 release](https://github.com/Drie
 
 For the complete download, checksum, backup, LaunchAgent, diagnostic, and rollback procedure, follow [Verified Installation And Rollback](docs/verified-installation.md).
 
+The current source includes an unreleased compatibility fix for ChatGPT 26.924, which moved its bundled CLI to `codex-cli/bin/codex`. Published v1.0.14 does not discover that layout automatically. The fix preserves older layouts and requires no Codex configuration changes.
+
 To build and install the current source with launch at login:
 
 ```bash

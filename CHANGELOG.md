@@ -4,6 +4,13 @@ Notable changes to `codex-pet-limit-rings` are recorded here.
 
 ## Unreleased
 
+## 1.0.15 - 2026-09-27
+
+### Bundled CLI Discovery
+
+- Find the `codex-cli/bin/codex` entrypoint used by ChatGPT 26.924 while retaining the previous `Resources/codex` layout. Apply the same lookup to system and user installations of ChatGPT.app and Codex.app.
+- Preserve explicit CLI overrides and Homebrew/PATH fallbacks; keep pet geometry, account access, and recovery behavior unchanged.
+
 ## 1.0.14 - 2026-09-23
 
 ### ChatGPT 26.917 Pet Surface Compatibility
