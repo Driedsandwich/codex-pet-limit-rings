@@ -2,9 +2,9 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
-## Unreleased
+## 1.0.16 - 2026-10-08
 
-### 1.0.16 — ChatGPT 26.1002 Pet Surface Compatibility
+### ChatGPT 26.1002 Pet Surface Compatibility
 
 - Recognize the updated native pet drawing panel using a separate paired width/offset profile: 1132 pixels wide and centered 166 pixels left of the saved pet center. Retain the previous 1128/164 profile.
 - Keep the official-process, on-screen, layer, configured pet size, display, and tight alignment checks; the panel remains identity evidence only, with pet-sized rings and mouse tracking.

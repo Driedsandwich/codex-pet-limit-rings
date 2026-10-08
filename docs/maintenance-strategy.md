@@ -26,17 +26,20 @@ Treat initialization and read deadlines as client-side recovery policy, not as a
 ## Release Policy
 
 - Use a patch release for a user-visible runtime, compatibility, privacy, packaging, or rollback correction.
+- Carry each product fix through regression and package validation, release publication, verification of the downloaded public ZIP, and matching updates to the download instructions, publication records, and latest-release CI pin. A source-only fix does not complete delivery.
 - Documentation- or test-only maintenance does not require a new binary release unless it corrects a published artifact contract.
 - Keep the pinned v1.0.0 long-term compatibility baseline under its documented legacy build-path exception, then separately require the current candidate and latest public artifact to pass all current gates.
 - Keep upstream-compatible fixes isolated where practical. The broader downstream product remains independently maintained.
+
+A release-notice feature is planned but is not implemented in v1.0.16. It is separate from automatic installation; the current app does not check for, download, or install its own updates.
 
 ## Deferred Scope
 
 The following remain out of scope unless a separate product decision establishes clear user value and a new privacy boundary:
 
 - Per-thread usage, thread resume/fork, prompt or transcript inspection, and durable usage analytics.
-- Reset-credit consumption, account mutation, additional notification classes, telemetry, or new permissions.
-- More milestones, dense dashboard features, automatic updates, or wider platform ports.
+- Reset-credit consumption, account mutation, additional usage-notification classes, telemetry, or new permissions.
+- More milestones, dense dashboard features, automatic update installation, or wider platform ports.
 - Signing and notarization infrastructure beyond the current distribution contract.
 
 Behavior-preserving modularization and a fake app-server integration harness are preferred future hardening work when they measurably reduce compatibility risk; they should not expand data collection or the visible feature surface.

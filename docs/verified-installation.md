@@ -1,12 +1,13 @@
 # Verified Installation And Rollback
 
-This runbook installs the published Codex Pet Limit Rings v1.0.15 app without trusting an unverified download. It preserves an existing app, LaunchAgent, preferences, and local Skill in one timestamped backup before replacement.
+This runbook installs the published Codex Pet Limit Rings v1.0.16 app without trusting an unverified download. It preserves an existing app, LaunchAgent, preferences, and local Skill in one timestamped backup before replacement.
 
 ## Published Artifact
 
-- Release: [v1.0.15](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.15)
-- Release target: `d8ec339acb458d39d5cc3263044bf597db85947d`
-- ZIP SHA-256: `1f9ea91cb9602e5d6710db0011b3ff0240cab0027b3c1d47fca3101602eca1aa`
+- Release: [v1.0.16](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.16)
+- Release target: `75a81ac4467dc16b3f4b55e9e3654622b49fcd66`
+- ZIP SHA-256: `0518630feb3b8604814df288bb62324075c1b048afff88a10358627a5441fae5`
+- Version/build: `1.0.16 / 25`
 - Platform: Apple silicon `arm64`, macOS `15.0` or later
 - Signing: ad-hoc signed and not notarized
 
@@ -15,8 +16,8 @@ This runbook installs the published Codex Pet Limit Rings v1.0.15 app without tr
 ```bash
 set -euo pipefail
 
-version=1.0.15
-expected_sha=1f9ea91cb9602e5d6710db0011b3ff0240cab0027b3c1d47fca3101602eca1aa
+version=1.0.16
+expected_sha=0518630feb3b8604814df288bb62324075c1b048afff88a10358627a5441fae5
 release_dir="$HOME/Downloads/CodexPetLimitRings-v$version"
 base_url="https://github.com/Driedsandwich/codex-pet-limit-rings/releases/download/v$version"
 
@@ -39,7 +40,7 @@ The following procedure changes the installed app. Run it only after reviewing t
 ```bash
 set -euo pipefail
 
-version=1.0.15
+version=1.0.16
 release_dir="${release_dir:-$HOME/Downloads/CodexPetLimitRings-v$version}"
 backup_root="$HOME/Library/Application Support/CodexPetLimitRings/Backups"
 mkdir -p "$backup_root"
@@ -100,6 +101,7 @@ set -euo pipefail
 
 app="$HOME/Applications/CodexPetLimitRings.app"
 plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist"
+plutil -extract CFBundleVersion raw "$app/Contents/Info.plist"
 plutil -extract LSMinimumSystemVersion raw "$app/Contents/Info.plist"
 vtool -show-build "$app/Contents/MacOS/CodexPetLimitRings"
 codesign --verify --deep --strict "$app"
@@ -107,7 +109,7 @@ launchctl print "gui/$(id -u)/com.codex-pet.limit-rings" >/dev/null
 "$app/Contents/MacOS/CodexPetLimitRings" --diagnose
 ```
 
-Confirm that the diagnostic remains privacy-safe, app-server is ready or has an explained bounded fallback, notifications have the expected state, and the rings are aligned to the live pet.
+Confirm version/build `1.0.16 / 25` and minimum macOS `15.0`. Confirm that the diagnostic remains privacy-safe, app-server is ready or has an explained bounded fallback, notifications have the expected state, and the rings are aligned to the live pet.
 
 ## Roll Back
 

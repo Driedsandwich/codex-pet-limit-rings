@@ -28,19 +28,17 @@ When ChatGPT exits or the pet is closed, minimized, or moved off the active Spac
 
 ## Quick Start
 
-The published v1.0.15 app supports Apple silicon on macOS 15 and later. Its ZIP SHA-256 is:
+The published v1.0.16 app supports Apple silicon on macOS 15 and later. Its ZIP SHA-256 is:
 
 ```text
-1f9ea91cb9602e5d6710db0011b3ff0240cab0027b3c1d47fca3101602eca1aa
+0518630feb3b8604814df288bb62324075c1b048afff88a10358627a5441fae5
 ```
 
-Download the ZIP and checksum from the [v1.0.15 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.15). The bundle is ad-hoc signed and not notarized, so verify the checksum and signature before approving a first launch.
+Download the ZIP and checksum from the [v1.0.16 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.16). The bundle is ad-hoc signed and not notarized, so verify the checksum and signature before approving a first launch.
 
 For the complete download, checksum, backup, LaunchAgent, diagnostic, and rollback procedure, follow [Verified Installation And Rollback](docs/verified-installation.md).
 
-Version 1.0.15 restores bundled CLI discovery for ChatGPT 26.924, which moved its CLI to `codex-cli/bin/codex`. Older bundled layouts, explicit CLI overrides, and Homebrew/PATH fallbacks remain supported; no Codex configuration changes are required.
-
-The current source includes an unreleased v1.0.16 compatibility fix for ChatGPT 26.1002's changed native pet drawing panel. The published v1.0.15 ZIP does not recognize this panel; build the current source for that layout. Existing panel profiles and permission-free detection remain supported.
+Version 1.0.16 restores rings on ChatGPT 26.1002's changed native pet drawing panel. Earlier panel profiles and bundled CLI discovery remain supported; no new permission or Codex configuration change is required.
 
 To build and install the current source with launch at login:
 
@@ -167,14 +165,14 @@ Build an ad-hoc-signed release ZIP and checksum under ignored `dist/`:
 tools/package-release.sh
 ```
 
-CI builds and verifies the current source, smoke-tests pinned v1.0.0 as the long-term provenance baseline, pinned v1.0.9 as the compatibility baseline, and the latest published v1.0.15 artifact. Only v1.0.0 receives its digest-bound pre-v1.0.4 local-path exception. Artifact execution uses synthetic account data; installed-app diagnostics separately verify the real CLI.
+CI builds and verifies the current source, smoke-tests pinned v1.0.0 as the long-term provenance baseline, pinned v1.0.9 as the compatibility baseline, and the latest published v1.0.16 artifact. Only v1.0.0 receives its digest-bound pre-v1.0.4 local-path exception. Artifact execution uses synthetic account data; installed-app diagnostics separately verify the real CLI.
 
 Inspect the latest published artifact without replacing the installed app:
 
 ```bash
 EXPECTED_MIN_OS=15.0 \
-EXPECTED_SHA256=1f9ea91cb9602e5d6710db0011b3ff0240cab0027b3c1d47fca3101602eca1aa \
-  tools/smoke-release-artifact.sh 1.0.15 --inspect-only
+EXPECTED_SHA256=0518630feb3b8604814df288bb62324075c1b048afff88a10358627a5441fae5 \
+  tools/smoke-release-artifact.sh 1.0.16 --inspect-only
 ```
 
 ## Give This Repository To Codex
@@ -214,7 +212,7 @@ experiments/weather-pets/            separate earlier weather-pet experiment
 - [CHANGELOG.md](CHANGELOG.md) records the complete release-by-release history.
 - [PUBLICATION_RECORD.md](PUBLICATION_RECORD.md) records publication provenance and release evidence.
 - [docs/downstream-scope.md](docs/downstream-scope.md) records the upstream baseline and downstream-only compatibility line.
-- [docs/release-notes-v1.0.15.md](docs/release-notes-v1.0.15.md) records the current release scope, artifact identity, and rollback target.
+- [docs/release-notes-v1.0.16.md](docs/release-notes-v1.0.16.md) records the current release scope, artifact identity, and rollback target.
 
 ## License
 
