@@ -16,6 +16,7 @@ _Privacy-safe v1.0.13 capture on the modern oversized avatar surface. Usage read
 - Daily Usage summarizes the latest 14 reported account-usage days in memory only.
 - Connection Health distinguishes live, cached, local, stale, and reconnecting states with text and non-color markers.
 - Optional 25%, 10%, and recovery notifications are local, off by default, and request permission only after opt-in.
+- The v1.0.17 source adds automatic release checks and a menu-bar update guide, with a manual check and an option to turn automatic checks off.
 - Reduced Motion, Increase Contrast, Differentiate Without Color, English, and Japanese are supported.
 
 ### Optional five-hour window example
@@ -68,6 +69,12 @@ See [docs/limit-rings.md](docs/limit-rings.md) for the complete tested surface, 
 The [v1.0.14 specification audit](docs/specification-audit-v1.0.14.md) records the legacy contracts, current compatibility evidence, corrected defects, and verification limits.
 
 ## Data And Privacy
+
+The v1.0.17 source checks this fork's public GitHub release metadata at startup and every 24 hours while running. `Check for App Updates…` also checks on demand. A newer validated release adds an upward arrow to the menu-bar icon and a menu item that opens its release page. The app does not download or install updates. Turn off `Automatically Check for App Updates` in the menu to stop automatic checks.
+
+These checks send a fixed anonymous request to GitHub. They send no Codex account data, usage, credentials, machine identifier, or installed-version value. GitHub receives ordinary connection information such as the IP address. The dedicated session uses no cookies, credentials, or disk cache; only the automatic-check preference is saved. Failed checks remain distinguishable from a successful up-to-date result. Preview and diagnostic modes do not check for releases.
+
+Versions through v1.0.16 have no release checker. Existing users must manually install a version containing this feature once before future releases can be detected. The current published download above remains v1.0.16 until v1.0.17 is released.
 
 The app uses a local stdio connection to the Codex app-server currently bundled with ChatGPT. OpenAI documents [`codex app-server`](https://learn.chatgpt.com/docs/developer-commands?surface=cli#cli-codex-app-server) as experimental and subject to change, so the following methods are a currently tested compatibility contract rather than a permanent API guarantee:
 

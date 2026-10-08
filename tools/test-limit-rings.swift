@@ -2,6 +2,21 @@ import AppKit
 import Foundation
 import SQLite3
 
+private final class FakeReleaseTransport: ReleaseCheckTransport {
+    final class Cancellation: ReleaseCheckCancellation {
+        var cancelled = false
+        func cancel() { cancelled = true }
+    }
+    var completions: [(Result<Data, Error>) -> Void] = []
+    var cancellations: [Cancellation] = []
+    func fetch(_ completion: @escaping (Result<Data, Error>) -> Void) -> ReleaseCheckCancellation {
+        completions.append(completion)
+        let cancellation = Cancellation()
+        cancellations.append(cancellation)
+        return cancellation
+    }
+}
+
 enum LimitRingsTestError: Error, CustomStringConvertible {
     case failed(String)
 
@@ -16,6 +31,9 @@ enum LimitRingsTestError: Error, CustomStringConvertible {
 struct LimitRingsTests {
     static func main() {
         do {
+            try testPublicReleaseValidation()
+            try testReleaseTransportPrivacyAndBounds()
+            try testReleaseCheckLifecycleAndStableMenu()
             try testCodexCLIPathSelection()
             try testPetLifecycleRequiresLiveOverlay()
             try testModernPetSurfaceSchemaRequiresNamedLiveWindow()
@@ -75,6 +93,142 @@ struct LimitRingsTests {
             fputs("limit-rings tests failed: \(error)\n", stderr)
             exit(1)
         }
+    }
+
+    private static func releaseFixture(tag: String = "v1.0.18") -> [String: Any] {
+        let zip = "CodexPetLimitRings-\(tag)-macos-arm64.zip"
+        return [
+            "tag_name": tag, "draft": false, "prerelease": false,
+            "published_at": "2026-10-08T01:00:00Z",
+            "html_url": "https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/\(tag)",
+            "assets": [zip, zip + ".sha256"].map { name in
+                ["name": name, "size": 123, "state": "uploaded",
+                 "browser_download_url": "https://github.com/Driedsandwich/codex-pet-limit-rings/releases/download/\(tag)/\(name)"] as [String: Any]
+            }
+        ]
+    }
+
+    private static func testPublicReleaseValidation() throws {
+        try expect(ReleaseVersion("v1.0.10")! > ReleaseVersion("v1.0.9")!, "numeric patch ordering")
+        try expect(ReleaseVersion("v2.0.0")! > ReleaseVersion("v1.999.999")!, "numeric major ordering")
+        try expect(ReleaseVersion("v1.10.0")! > ReleaseVersion("v1.9.99")!, "numeric minor ordering")
+        try expect(ReleaseVersion("v1.0.17")! == ReleaseVersion("v1.0.17")!, "same release ordering")
+        for tag in ["1.0.17", "v01.0.17", "v1.00.17", "v1.0.017", "v1.0.17-beta", "v1.0.17+meta", "v1.0", "v1.0.17\n", "v1.0.-1", "v1.0.9007199254740992", "v١.0.1", "v1..1"] {
+            try expect(ReleaseVersion(tag) == nil, "malformed release tag accepted: \(tag)")
+        }
+        let valid = releaseFixture()
+        let decoded = try PublicReleaseAPI.decode(JSONSerialization.data(withJSONObject: valid))
+        try expect(decoded.version.tag == "v1.0.18", "expected validated release")
+        var invalid: [[String: Any]] = []
+        for (key, value) in [("draft", true as Any), ("prerelease", true as Any), ("published_at", "not-a-date" as Any), ("html_url", "https://example.com/release" as Any), ("tag_name", "v1.0.18-beta" as Any)] {
+            var changed = valid; changed[key] = value; invalid.append(changed)
+        }
+        var missing = valid; missing["assets"] = []; invalid.append(missing)
+        for (key, value) in [("state", "new" as Any), ("size", 0 as Any), ("size", -1 as Any), ("browser_download_url", "https://example.com/archive.zip" as Any)] {
+            var changed = valid
+            var assets = valid["assets"] as! [[String: Any]]
+            assets[0][key] = value; changed["assets"] = assets; invalid.append(changed)
+        }
+        var duplicate = valid
+        var assets = valid["assets"] as! [[String: Any]]
+        assets.append(assets[0]); duplicate["assets"] = assets; invalid.append(duplicate)
+        for fixture in invalid {
+            let data = try JSONSerialization.data(withJSONObject: fixture)
+            try expect((try? PublicReleaseAPI.decode(data)) == nil, "invalid release metadata accepted")
+        }
+        try expect((try? PublicReleaseAPI.decode(Data(repeating: 32, count: PublicReleaseAPI.maximumBytes + 1))) == nil, "oversized metadata accepted")
+    }
+
+    private static func testReleaseTransportPrivacyAndBounds() throws {
+        let request = PublicReleaseAPI.request()
+        let config = PublicReleaseAPI.configuration()
+        try expect(request.url == PublicReleaseAPI.endpoint && request.httpBody == nil && request.httpMethod == "GET", "release request must only GET fixed public metadata")
+        try expect(request.value(forHTTPHeaderField: "Accept") == "application/vnd.github+json" && request.value(forHTTPHeaderField: "X-GitHub-Api-Version") == "2026-03-10", "versioned public API headers")
+        try expect(request.value(forHTTPHeaderField: "Authorization") == nil && request.value(forHTTPHeaderField: "Cookie") == nil, "anonymous metadata request")
+        try expect(!request.httpShouldHandleCookies && !config.httpShouldSetCookies && config.httpCookieStorage == nil && config.urlCache == nil && config.urlCredentialStorage == nil, "release transport storage disabled")
+        try expect(request.timeoutInterval == 15 && config.timeoutIntervalForResource == 15, "finite metadata request deadline")
+        for status in [301, 302, 403, 404, 429, 500] {
+            let response = HTTPURLResponse(url: PublicReleaseAPI.endpoint, statusCode: status, httpVersion: nil, headerFields: nil)!
+            try expect(!PublicReleaseAPI.accepts(response), "non-200 release response accepted")
+        }
+        let huge = HTTPURLResponse(url: PublicReleaseAPI.endpoint, statusCode: 200, httpVersion: nil, headerFields: ["Content-Length": "262145"])!
+        try expect(!PublicReleaseAPI.accepts(huge), "oversized response declaration accepted")
+        let foreign = HTTPURLResponse(url: URL(string: "https://example.com")!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        try expect(!PublicReleaseAPI.accepts(foreign), "foreign response URL accepted")
+
+        // Invoke delegate boundaries with suspended tasks: no request is started.
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let task = session.dataTask(with: request)
+        var oversizedResult: Result<Data, Error>?
+        let oversized = PublicReleaseRequest { oversizedResult = $0 }
+        oversized.urlSession(session, dataTask: task, didReceive: Data(repeating: 32, count: PublicReleaseAPI.maximumBytes))
+        oversized.urlSession(session, dataTask: task, didReceive: Data([32]))
+        var redirectedResult: Result<Data, Error>?
+        let redirected = PublicReleaseRequest { redirectedResult = $0 }
+        var followedRedirect = true
+        redirected.urlSession(session, task: task,
+            willPerformHTTPRedirection: HTTPURLResponse(url: PublicReleaseAPI.endpoint, statusCode: 302, httpVersion: nil, headerFields: nil)!,
+            newRequest: URLRequest(url: URL(string: "https://example.com")!)) { followedRedirect = $0 != nil }
+        let deadline = Date().addingTimeInterval(1)
+        while (oversizedResult == nil || redirectedResult == nil) && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        try expect(oversizedResult != nil && (try? oversizedResult?.get()) == nil, "streaming body size limit must reject before completion")
+        try expect(!followedRedirect && redirectedResult != nil && (try? redirectedResult?.get()) == nil, "redirect must be refused")
+    }
+
+    private static func testReleaseCheckLifecycleAndStableMenu() throws {
+        let failedTransport = FakeReleaseTransport()
+        let failedChecker = ReleaseUpdateChecker(currentVersion: ReleaseVersion("v1.0.17")!, automatic: true, transport: failedTransport)
+        failedChecker.check()
+        failedTransport.completions[0](.failure(URLError(.timedOut)))
+        try expect(failedChecker.available == nil && failedChecker.status == .failed
+            && failedChecker.releaseTitle == "No Confirmed App Update", "initial failure must not claim the app is up to date")
+        let transport = FakeReleaseTransport()
+        var now: TimeInterval = 100
+        let checker = ReleaseUpdateChecker(currentVersion: ReleaseVersion("v1.0.17")!, automatic: true, transport: transport, clock: { now })
+        try expect(transport.completions.isEmpty, "construction must not start network")
+        try expect(automaticReleaseChecksFromStoredValue(nil) && !automaticReleaseChecksFromStoredValue(false), "automatic default ON with explicit OFF")
+        let root = try temporaryDirectory(named: "release-menu")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = LimitRingsApp(config: LimitRingsConfig(codexHome: root, globalStatePath: root.appendingPathComponent("global.json"), logsPath: root.appendingPathComponent("missing.sqlite")), releaseChecker: checker)
+        let menu = NSMenu()
+        app.installReleaseMenuForTesting(menu)
+        let identities = menu.items.map(ObjectIdentifier.init)
+        let normalIcon = app.releaseStatusIconForTesting().tiffRepresentation
+        try expect(menu.numberOfItems == 3 && !app.validateMenuItem(menu.items[1]), "stable update actions start without available release")
+        checker.automaticCheckIfDue(); checker.automaticCheckIfDue(); checker.check()
+        try expect(transport.completions.count == 1 && checker.status == .checking && !app.validateMenuItem(menu.items[0]), "single flight must reject overlapping automatic/manual checks")
+        app.menuWillOpen(menu)
+        let newer = try JSONSerialization.data(withJSONObject: releaseFixture())
+        transport.completions[0](.success(newer))
+        try expect(checker.available?.version.tag == "v1.0.18" && app.validateMenuItem(menu.items[1]), "newer release enables release page action")
+        try expect(checker.accessibilityLabel.contains("v1.0.18") && app.releaseStatusIconForTesting().tiffRepresentation != normalIcon, "update has accessible text and a visible shape cue")
+        try expect(menu.items.map(ObjectIdentifier.init) == identities && menu.items[1].title.contains("v1.0.18"), "async result keeps menu identities and displays only safe version")
+        checker.check()
+        transport.completions[1](.failure(URLError(.timedOut)))
+        try expect(checker.status == .failed && checker.available != nil && app.validateMenuItem(menu.items[0]), "timeout retains update and permits manual retry")
+        checker.check()
+        checker.setAutomatic(false)
+        try expect(transport.cancellations[2].cancelled, "disabling automatic checks cancels pending work")
+        transport.completions[2](.success(try JSONSerialization.data(withJSONObject: releaseFixture(tag: "v1.0.17"))))
+        try expect(checker.available?.version.tag == "v1.0.18" && checker.status == .idle, "late callback after disabling cannot mutate display")
+        now += ReleaseUpdateChecker.interval
+        checker.automaticCheckIfDue()
+        try expect(transport.completions.count == 3, "disabled automatic check remains silent")
+        checker.check()
+        transport.completions[3](.success(try JSONSerialization.data(withJSONObject: releaseFixture(tag: "v1.0.17"))))
+        try expect(checker.available == nil && checker.status == .current && !checker.automatic, "manual checking works while automatic is off")
+        checker.setAutomatic(true)
+        transport.completions[4](.success(newer))
+        now += ReleaseUpdateChecker.interval - 1; checker.automaticCheckIfDue()
+        try expect(transport.completions.count == 5, "no automatic retry before 24 hours")
+        now += 1; checker.automaticCheckIfDue()
+        try expect(transport.completions.count == 6, "automatic check repeats after 24 hours")
+        checker.setAutomatic(false)
+        app.menuDidClose(menu)
+        try expect(menu.items.map(ObjectIdentifier.init) == identities, "open and closed menu retain structure")
     }
 
     private static func testCodexCLIPathSelection() throws {
@@ -2351,7 +2505,7 @@ struct LimitRingsTests {
         let englishKeys = keys(in: english)
         let japaneseKeys = keys(in: japanese)
         try expect(englishKeys == japaneseKeys, "expected English and Japanese localization key parity")
-        for key in ["ring.stale", "connection.lastFailure", "connection.lastManualRefresh", "connection.lastManualWaiting", "refresh.connectedFullRead", "refresh.freshConnection"] {
+        for key in ["ring.stale", "connection.lastFailure", "connection.lastManualRefresh", "connection.lastManualWaiting", "refresh.connectedFullRead", "refresh.freshConnection", "update.check", "update.checking", "update.current", "update.failed", "update.none", "update.available", "update.automatic"] {
             try expect(englishKeys.contains(key), "expected localization key \(key)")
         }
     }

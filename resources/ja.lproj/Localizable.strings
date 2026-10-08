@@ -6,6 +6,13 @@
 "menu.notifications" = "利用上限の通知";
 "menu.refresh" = "今すぐ更新";
 "menu.quit" = "Codex Pet Limit Ringsを終了";
+"update.check" = "アプリの更新を確認…";
+"update.checking" = "アプリの更新を確認中…";
+"update.current" = "アプリは最新です · もう一度確認";
+"update.failed" = "更新を確認できませんでした · 再試行";
+"update.none" = "確認済みの新バージョンはありません";
+"update.available" = "アプリの更新 %@ があります · 公開ページを開く…";
+"update.automatic" = "アプリの更新を自動で確認";
 "summary.short" = "短期 %@";
 "summary.weekly" = "週間 %@";
 "summary.noData" = "現在のCodex利用上限データはありません";

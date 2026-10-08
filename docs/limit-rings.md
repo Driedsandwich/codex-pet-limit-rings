@@ -21,6 +21,16 @@ The rings are pet-agnostic. They work with any pet Codex displays because the ap
 - macOS desktop/Space switching hides the rings while the pet is off the active Space and restores them with the pet when its Space becomes active.
 - Switching to another Codex pet requires no extra setup; the overlay follows the active pet.
 
+## App Update Guidance (v1.0.17)
+
+The normal GUI app checks this fork's latest public GitHub release at startup and every 24 hours. The menu provides `Check for App Updates…` and `Automatically Check for App Updates`; automatic checking defaults on and can be disabled. A validated newer version adds an upward arrow to the menu-bar icon, an accessible text label, and a menu action that opens its release page. This feature does not download or install the app and does not request macOS notification permission.
+
+The request is a fixed anonymous GET to `https://api.github.com/repos/Driedsandwich/codex-pet-limit-rings/releases/latest`, using GitHub's [public release API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release). No account data, usage, credentials, machine identifier, or installed-version value is sent. GitHub receives normal connection metadata including the IP address. The dedicated ephemeral session has no cookie storage, credential storage, or disk cache. Only the automatic-check preference is persisted; release results and request times remain in memory.
+
+Requests have a 15-second timeout and a 256 KiB response limit, reject redirects, and run one at a time. Metadata must describe a published stable numeric version, the exact repository release URL, and uploaded arm64 ZIP and checksum assets with canonical download URLs. The UI uses only the validated version, not remote release text. A failed check never becomes an up-to-date result; an already known update survives a transient failure. Disabling automatic checks cancels pending work and ignores its late callback. Manual checks remain available when automatic checking is off.
+
+Release menu items keep their identity and position while open. The update indicator uses a shape and an accessible label rather than color alone. This checker is started only by the normal GUI `run()` path, so previews, diagnostics, and package fixtures do not contact GitHub. Versions through v1.0.16 cannot detect releases and need one manual upgrade to gain this feature.
+
 ## Data Flow
 
 The app reads live usage first, then local files as support or fallback:
