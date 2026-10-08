@@ -40,6 +40,8 @@ For the complete download, checksum, backup, LaunchAgent, diagnostic, and rollba
 
 Version 1.0.15 restores bundled CLI discovery for ChatGPT 26.924, which moved its CLI to `codex-cli/bin/codex`. Older bundled layouts, explicit CLI overrides, and Homebrew/PATH fallbacks remain supported; no Codex configuration changes are required.
 
+The current source includes an unreleased v1.0.16 compatibility fix for ChatGPT 26.1002's changed native pet drawing panel. The published v1.0.15 ZIP does not recognize this panel; build the current source for that layout. Existing panel profiles and permission-free detection remain supported.
+
 To build and install the current source with launch at login:
 
 ```bash
@@ -54,7 +56,7 @@ This fork preserves the original companion-app boundary and MIT license while ex
 
 | Area | Current contract |
 | --- | --- |
-| Pet surfaces | Official `com.openai.codex` process; legacy overlay, named mascot effect, bounded compact pet, centered oversized panel, or the separately verified ChatGPT 26.917 asymmetric drawing panel |
+| Pet surfaces | Official `com.openai.codex` process; legacy overlay, named mascot effect, bounded compact pet, centered oversized panel, or the separately verified ChatGPT 26.917 and 26.1002 asymmetric drawing panels |
 | Placement | Live size and display tracking; bounded desktop pet-width setting and 192-by-208 canvas ratio; transparent drawing-panel bounds never become the interaction target |
 | Pet controls | Complete circular, mouse-through rings while preserving normal and contracted ChatGPT pet voice-control hit targets |
 | Limit updates | Long-lived experimental app-server connection, sparse live updates, 120-second full-snapshot watchdog, five-second read timeout, and bounded reconnect |

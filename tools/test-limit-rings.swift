@@ -696,8 +696,12 @@ struct LimitRingsTests {
         let officialPID: pid_t = 123
         let mainDisplay = CGRect(x: 0, y: 0, width: 1_470, height: 956)
         let leftDisplay = CGRect(x: -1_920, y: 0, width: 1_920, height: 1_080)
+        let currentDisplay = CGRect(x: 0, y: 0, width: 1_920, height: 1_080)
         let mainOrigin = CGPoint(x: 94, y: 136)
         let mainOverlay = CGRect(x: -594, y: -855, width: 1_128, height: 2_069)
+        let currentOrigin = CGPoint(x: 1_808, y: 492)
+        let resizedOrigin = CGPoint(x: 1_500, y: 492)
+        let currentOverlay = CGRect(x: 1_116, y: -499, width: 1_132, height: 2_069)
         let minimumSize = CGSize(width: 80, height: 80 * codexPetCanvasHeight / codexPetCanvasWidth)
         let reference = CGRect(origin: mainOrigin, size: minimumSize)
 
@@ -723,13 +727,13 @@ struct LimitRingsTests {
             try JSONSerialization.data(withJSONObject: payload).write(to: stateURL)
         }
 
-        func panel(origin: CGPoint, width: CGFloat) -> CGRect {
+        func panel(origin: CGPoint, width: CGFloat, panelWidth: CGFloat = 1_128, petOffsetX: CGFloat = 164) -> CGRect {
             let height = width * codexPetCanvasHeight / codexPetCanvasWidth
             let center = CGPoint(
-                x: origin.x + (width / 2).rounded() - 164,
+                x: origin.x + (width / 2).rounded() - petOffsetX,
                 y: origin.y + (height.rounded() / 2).rounded() - 0.5
             )
-            return CGRect(x: center.x - 564, y: center.y - 1_034.5, width: 1_128, height: 2_069)
+            return CGRect(x: center.x - panelWidth / 2, y: center.y - 1_034.5, width: panelWidth, height: 2_069)
         }
 
         var candidateSurface: CGRect? = mainOverlay
@@ -766,7 +770,12 @@ struct LimitRingsTests {
             ("measured left display", CGPoint(x: -1_682, y: 717), leftDisplay, 80,
              CGRect(x: -2_370, y: -274, width: 1_128, height: 2_069)),
             ("160-pixel canvas", mainOrigin, mainDisplay, 160, panel(origin: mainOrigin, width: 160)),
-            ("224-pixel canvas", mainOrigin, mainDisplay, 224, panel(origin: mainOrigin, width: 224))
+            ("224-pixel canvas", mainOrigin, mainDisplay, 224, panel(origin: mainOrigin, width: 224)),
+            ("measured 26.1002 panel", currentOrigin, currentDisplay, 80, currentOverlay),
+            ("synthetic 26.1002 160-pixel canvas", resizedOrigin, currentDisplay, 160,
+             panel(origin: resizedOrigin, width: 160, panelWidth: 1_132, petOffsetX: 166)),
+            ("synthetic 26.1002 224-pixel canvas", resizedOrigin, currentDisplay, 224,
+             panel(origin: resizedOrigin, width: 224, panelWidth: 1_132, petOffsetX: 166))
         ]
         let reader = makeReader(configPath: configURL)
         for (label, origin, display, width, surface) in cases {
@@ -797,7 +806,9 @@ struct LimitRingsTests {
             ("off Space", nil, officialPID, 3, mainOverlay, [mainDisplay], false),
             ("empty title", "", officialPID, 3, mainOverlay, [mainDisplay], true),
             ("different title", "ChatGPT Settings", officialPID, 3, mainOverlay, [mainDisplay], true),
-            ("wrong width", nil, officialPID, 3, mainOverlay.insetBy(dx: -2, dy: 0), [mainDisplay], true),
+            // 1132px is now a supported width at its paired center; 1130px and 1136px remain unsupported.
+            ("between profiles", nil, officialPID, 3, mainOverlay.insetBy(dx: -1, dy: 0), [mainDisplay], true),
+            ("wrong width", nil, officialPID, 3, mainOverlay.insetBy(dx: -4, dy: 0), [mainDisplay], true),
             ("horizontal mismatch", nil, officialPID, 3, mainOverlay.offsetBy(dx: 20, dy: 0), [mainDisplay], true),
             ("vertical mismatch", nil, officialPID, 3, mainOverlay.offsetBy(dx: 0, dy: 20), [mainDisplay], true),
             ("missing display", nil, officialPID, 3, mainOverlay, [], true),
@@ -820,6 +831,35 @@ struct LimitRingsTests {
                     requiresAlignedDirectSurface: true
                 ) == nil,
                 "expected asymmetric surface rejection for \(label)"
+            )
+        }
+
+        let currentReference = CGRect(origin: currentOrigin, size: minimumSize)
+        let currentRejected: [(String, String?, pid_t?, CGFloat, CGRect, [CGRect], Bool)] = [
+            ("foreign PID", nil, 456, 3, currentOverlay, [currentDisplay], true),
+            ("wrong layer", nil, officialPID, 2, currentOverlay, [currentDisplay], true),
+            ("off Space", nil, officialPID, 3, currentOverlay, [currentDisplay], false),
+            ("different title", "ChatGPT Settings", officialPID, 3, currentOverlay, [currentDisplay], true),
+            ("between profiles", nil, officialPID, 3, currentOverlay.insetBy(dx: 1, dy: 0), [currentDisplay], true),
+            ("outside profiles", nil, officialPID, 3, currentOverlay.insetBy(dx: -2, dy: 0), [currentDisplay], true),
+            ("wrong center for paired width", nil, officialPID, 3, currentOverlay.offsetBy(dx: 3, dy: 0), [currentDisplay], true),
+            ("horizontal mismatch", nil, officialPID, 3, currentOverlay.offsetBy(dx: 20, dy: 0), [currentDisplay], true),
+            ("missing display", nil, officialPID, 3, currentOverlay, [], true)
+        ]
+        for (label, name, pid, layer, surface, displays, onScreen) in currentRejected {
+            try expect(
+                codexPetSurfaceKind(
+                    name: name,
+                    ownerPID: pid,
+                    officialCodexPIDs: [officialPID],
+                    layer: layer,
+                    bounds: surface,
+                    mascotReference: currentReference,
+                    knownDisplayBounds: displays,
+                    isOnScreen: onScreen,
+                    requiresAlignedDirectSurface: true
+                ) == nil,
+                "expected 26.1002 asymmetric surface rejection for \(label)"
             )
         }
 
@@ -886,6 +926,16 @@ struct LimitRingsTests {
             classifiedKind == .asymmetricAvatarOverlay,
             "expected missing-config rejection after genuine classification, even with matching historical geometry"
         )
+
+        candidateSurface = currentOverlay
+        try writeState(origin: currentOrigin, display: currentDisplay, open: false)
+        try expect(reader.readPetFramesTopLeft(requireLiveOverlay: true) == nil, "expected closed 26.1002 state to hide rings")
+        try writeState(origin: currentOrigin, display: currentDisplay)
+        candidateSurface = nil
+        try expect(reader.readPetFramesTopLeft(requireLiveOverlay: true) == nil, "expected missing 26.1002 panel to hide rings")
+        candidateSurface = currentOverlay
+        try writeState(origin: currentOrigin, display: currentDisplay, historicalSize: minimumSize)
+        try expect(unconfiguredReader.readPetFramesTopLeft(requireLiveOverlay: true) == nil, "expected no 26.1002 placement without configured pet size")
     }
 
     private static func testDesktopPetSizeContract() throws {
