@@ -1,15 +1,29 @@
 # Publication Record
 
-status: v1.0.15-released
+status: v1.0.16-released
 
-## Current Release: v1.0.15 (2026-09-27)
+## Current Release: v1.0.16 (2026-10-08)
+
+- Compatibility PR: [#54](https://github.com/Driedsandwich/codex-pet-limit-rings/pull/54), merged; tested PR head `b378056f2975b5b00304d74eca16c7a0fd106fd8`.
+- Release target: `75a81ac4467dc16b3f4b55e9e3654622b49fcd66`.
+- Target tree: `f35dc26370f0624f3d1e2ee72ea8fa7767412348`.
+- PR CI [37745709429](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/37745709429) and main CI [37745944630](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/37745944630) passed on macOS 15 and 26.
+- Annotated tag object: `a1cb0477f970ba8327676e283d57ac8bffba565e`; its target is the release commit above.
+- Public latest Release: [v1.0.16](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.16), published October 8, 2026 at 08:23:40 UTC; release ID `406594246`.
+- ZIP SHA-256: `0518630feb3b8604814df288bb62324075c1b048afff88a10358627a5441fae5`; the previously verified local artifact and re-downloaded public bytes agree.
+- Apple silicon `arm64`, macOS `15.0` in Info.plist and Mach-O, version `1.0.16`, build `25`; ad-hoc signed, not notarized.
+- The fixed-SHA published-artifact gate passed checksum, archive allowlist, signature, architecture, version, deployment-target, localization, local-path, synthetic-preview, and fixture-diagnostic checks. Publication reused the previously verified package without rebuilding or reinstalling it.
+- The installed bundle matched every file of that package. A separate real-CLI diagnostic reported app-server ready, current rate-limit and usage data, and a readable pet frame on Codex 26.1002.52244 / CLI 0.162.0-alpha.2. The operator confirmed correct ring display.
+- The fix recognizes the changed native pet drawing panel while retaining the previous panel profiles and permission-free detection. See [release notes](docs/release-notes-v1.0.16.md).
+
+## Release: v1.0.15 (2026-09-27)
 
 - Compatibility PR: [#52](https://github.com/Driedsandwich/codex-pet-limit-rings/pull/52), merged.
 - Release target: `d8ec339acb458d39d5cc3263044bf597db85947d`.
 - Target tree: `559a8aa53c27d471f1a956432183131643e441cc`, identical to tested PR head `21c1e0298e9804f1933e2ce7112d7a11bb5c738c`.
 - PR CI [36324135834](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/36324135834) and main CI [36324300943](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/36324300943) passed on macOS 15 and 26.
 - Annotated tag object: `8fd40c324ffba7112596268656bbdd9a71a6cb27`; its target is the release commit above. Author, committer, and tagger use the public noreply identity.
-- Public latest Release: [v1.0.15](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.15), published September 27, 2026; not a draft or prerelease.
+- Public Release: [v1.0.15](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.15), published September 27, 2026; latest at publication, not a draft or prerelease.
 - ZIP SHA-256: `1f9ea91cb9602e5d6710db0011b3ff0240cab0027b3c1d47fca3101602eca1aa`; the verified local artifact, GitHub asset digest, and re-downloaded public bytes agree.
 - Apple silicon `arm64`, macOS `15.0` in Info.plist and Mach-O, version `1.0.15`, build `24`; ad-hoc signed, not notarized.
 - The fixed-SHA published-artifact gate passed checksum, archive allowlist, signature, architecture, version, deployment-target, localization, local-path, synthetic-preview, and fixture-diagnostic checks. The existing verified package was published without rebuilding it.
@@ -57,6 +71,7 @@ status: v1.0.15-released
 - v1.0.13 release merge commit: `acf93391a925999e28df7888ece97e65fc26e92a`
 - v1.0.14 release merge commit: `c53255e47155930b8ebc83f97aa836a9d1b5ebf1`
 - v1.0.15 release merge commit: `d8ec339acb458d39d5cc3263044bf597db85947d`
+- v1.0.16 release merge commit: `75a81ac4467dc16b3f4b55e9e3654622b49fcd66`
 
 ## Publication Targets
 

@@ -38,8 +38,8 @@ jobs:
           EXPECTED_SHA256: "e085c5ee47e9a8ebafbc8cb6d2788d673b26c85ab1b520792bbe5da8b42aa273"
         run: |
           tools/smoke-release-artifact.sh 1.0.9
-      - name: Smoke-test the pinned latest v1.0.15 release
+      - name: Smoke-test the pinned latest v1.0.16 release
         env:
           EXPECTED_MIN_OS: "15.0"
-          EXPECTED_SHA256: "1f9ea91cb9602e5d6710db0011b3ff0240cab0027b3c1d47fca3101602eca1aa"
-        run: tools/smoke-release-artifact.sh 1.0.15
+          EXPECTED_SHA256: "0518630feb3b8604814df288bb62324075c1b048afff88a10358627a5441fae5"
+        run: tools/smoke-release-artifact.sh 1.0.16
