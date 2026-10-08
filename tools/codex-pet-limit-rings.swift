@@ -5,6 +5,253 @@ import Foundation
 import SQLite3
 import UserNotifications
 
+// Update checks use only public release metadata; this path never reads Codex data.
+struct ReleaseVersion: Comparable {
+    let major: UInt64
+    let minor: UInt64
+    let patch: UInt64
+    var tag: String { "v\(major).\(minor).\(patch)" }
+
+    init?(_ tag: String) {
+        guard tag.utf8.count <= 52, tag.first == "v" else { return nil }
+        let parts = tag.dropFirst().split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 3 else { return nil }
+        var values: [UInt64] = []
+        for part in parts {
+            guard !part.isEmpty, part.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
+                  part.count == 1 || part.first != "0",
+                  let value = UInt64(part), value <= 9_007_199_254_740_991 else { return nil }
+            values.append(value)
+        }
+        (major, minor, patch) = (values[0], values[1], values[2])
+    }
+
+    static func < (lhs: Self, rhs: Self) -> Bool {
+        (lhs.major, lhs.minor, lhs.patch) < (rhs.major, rhs.minor, rhs.patch)
+    }
+}
+
+struct ValidatedRelease {
+    let version: ReleaseVersion
+    var pageURL: URL { URL(string: "https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/\(version.tag)")! }
+}
+
+enum ReleaseCheckError: Error { case invalidResponse, oversized, redirected }
+
+enum PublicReleaseAPI {
+    static let endpoint = URL(string: "https://api.github.com/repos/Driedsandwich/codex-pet-limit-rings/releases/latest")!
+    static let maximumBytes = 256 * 1024
+    static let timeout: TimeInterval = 15
+
+    static func request() -> URLRequest {
+        var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("2026-03-10", forHTTPHeaderField: "X-GitHub-Api-Version")
+        request.setValue("CodexPetLimitRings", forHTTPHeaderField: "User-Agent")
+        request.httpShouldHandleCookies = false
+        return request
+    }
+
+    static func configuration() -> URLSessionConfiguration {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        config.urlCredentialStorage = nil
+        config.urlCache = nil
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.timeoutIntervalForRequest = timeout
+        config.timeoutIntervalForResource = timeout
+        return config
+    }
+
+    static func accepts(_ response: URLResponse) -> Bool {
+        guard let response = response as? HTTPURLResponse else { return false }
+        return response.url == endpoint && response.statusCode == 200
+            && response.expectedContentLength <= Int64(maximumBytes)
+    }
+
+    static func decode(_ data: Data) throws -> ValidatedRelease {
+        struct Asset: Decodable { let name: String; let state: String; let size: UInt64; let browser_download_url: String }
+        struct Release: Decodable {
+            let tag_name: String; let draft: Bool; let prerelease: Bool
+            let published_at: String; let html_url: String; let assets: [Asset]
+        }
+        guard data.count <= maximumBytes else { throw ReleaseCheckError.oversized }
+        let release = try JSONDecoder().decode(Release.self, from: data)
+        guard !release.draft, !release.prerelease, let version = ReleaseVersion(release.tag_name),
+              ISO8601DateFormatter().date(from: release.published_at) != nil else { throw ReleaseCheckError.invalidResponse }
+        let validated = ValidatedRelease(version: version)
+        guard release.html_url == validated.pageURL.absoluteString else { throw ReleaseCheckError.invalidResponse }
+        let zip = "CodexPetLimitRings-\(version.tag)-macos-arm64.zip"
+        for name in [zip, zip + ".sha256"] {
+            let matches = release.assets.filter { $0.name == name }
+            guard matches.count == 1, let asset = matches.first, asset.state == "uploaded", asset.size > 0,
+                  asset.browser_download_url == "https://github.com/Driedsandwich/codex-pet-limit-rings/releases/download/\(version.tag)/\(name)"
+            else { throw ReleaseCheckError.invalidResponse }
+        }
+        return validated
+    }
+}
+
+protocol ReleaseCheckCancellation: AnyObject { func cancel() }
+protocol ReleaseCheckTransport {
+    func fetch(_ completion: @escaping (Result<Data, Error>) -> Void) -> ReleaseCheckCancellation
+}
+
+struct PublicReleaseTransport: ReleaseCheckTransport {
+    func fetch(_ completion: @escaping (Result<Data, Error>) -> Void) -> ReleaseCheckCancellation {
+        let operation = PublicReleaseRequest(completion: completion)
+        operation.start()
+        return operation
+    }
+}
+
+// A serial delegate bounds received bytes before buffering and refuses all redirects.
+final class PublicReleaseRequest: NSObject, URLSessionDataDelegate, ReleaseCheckCancellation, @unchecked Sendable {
+    private var session: URLSession?
+    private var data = Data()
+    private var completion: ((Result<Data, Error>) -> Void)?
+    init(completion: @escaping (Result<Data, Error>) -> Void) { self.completion = completion }
+
+    func start() {
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+        let session = URLSession(configuration: PublicReleaseAPI.configuration(), delegate: self, delegateQueue: queue)
+        self.session = session
+        session.dataTask(with: PublicReleaseAPI.request()).resume()
+    }
+
+    func cancel() { session?.invalidateAndCancel() }
+
+    private func finish(_ result: Result<Data, Error>) {
+        guard let completion else { return }
+        self.completion = nil
+        session?.invalidateAndCancel()
+        DispatchQueue.main.async { completion(result) }
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard PublicReleaseAPI.accepts(response) else {
+            completionHandler(.cancel)
+            finish(.failure(ReleaseCheckError.invalidResponse))
+            return
+        }
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive bytes: Data) {
+        guard completion != nil else { return }
+        guard bytes.count <= PublicReleaseAPI.maximumBytes - data.count else {
+            finish(.failure(ReleaseCheckError.oversized)); return
+        }
+        data.append(bytes)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+        finish(.failure(ReleaseCheckError.redirected))
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        completionHandler(challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust
+            ? .performDefaultHandling : .cancelAuthenticationChallenge, nil)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error { finish(.failure(error)) } else { finish(.success(data)) }
+    }
+}
+
+enum ReleaseCheckStatus { case idle, checking, current, failed }
+let automaticReleaseChecksDefaultsKey = "CodexPetLimitRings.automaticReleaseChecks"
+func automaticReleaseChecksFromStoredValue(_ value: Any?) -> Bool { (value as? Bool) ?? true }
+
+// Main-thread state, with an injectable transport and monotonic clock for offline tests.
+final class ReleaseUpdateChecker {
+    static let interval: TimeInterval = 24 * 60 * 60
+    private let currentVersion: ReleaseVersion
+    private let transport: ReleaseCheckTransport
+    private let clock: () -> TimeInterval
+    private var cancellation: ReleaseCheckCancellation?
+    private var generation: UInt64 = 0
+    private var lastAutomaticAttempt: TimeInterval?
+    private(set) var automatic: Bool
+    private(set) var status: ReleaseCheckStatus = .idle
+    private(set) var available: ValidatedRelease?
+    var onChange: (() -> Void)?
+
+    init(currentVersion: ReleaseVersion, automatic: Bool, transport: ReleaseCheckTransport = PublicReleaseTransport(),
+         clock: @escaping () -> TimeInterval = continuousUptime) {
+        self.currentVersion = currentVersion; self.automatic = automatic
+        self.transport = transport; self.clock = clock
+    }
+
+    deinit { cancellation?.cancel() }
+
+    func automaticCheckIfDue() {
+        guard automatic, status != .checking else { return }
+        let now = clock()
+        guard lastAutomaticAttempt.map({ now - $0 >= Self.interval }) ?? true else { return }
+        lastAutomaticAttempt = now
+        check()
+    }
+
+    func setAutomatic(_ enabled: Bool) {
+        guard automatic != enabled else { return }
+        automatic = enabled
+        if !enabled {
+            generation &+= 1
+            cancellation?.cancel(); cancellation = nil
+            if status == .checking { status = .idle }
+        } else {
+            lastAutomaticAttempt = nil
+        }
+        onChange?()
+        if enabled { automaticCheckIfDue() }
+    }
+
+    func check() {
+        guard status != .checking else { return }
+        generation &+= 1
+        let requestGeneration = generation
+        status = .checking
+        onChange?()
+        let operation = transport.fetch { [weak self] result in
+            guard let self, self.generation == requestGeneration, self.status == .checking else { return }
+            self.cancellation = nil
+            do {
+                let release = try PublicReleaseAPI.decode(result.get())
+                self.available = release.version > self.currentVersion ? release : nil
+                self.status = .current
+            } catch { self.status = .failed }
+            self.onChange?()
+        }
+        if status == .checking, generation == requestGeneration { cancellation = operation }
+    }
+
+    var checkTitle: String {
+        switch status {
+        case .idle: return localized("update.check", fallback: "Check for App Updates…")
+        case .checking: return localized("update.checking", fallback: "Checking for App Updates…")
+        case .current where available == nil: return localized("update.current", fallback: "App Is Up to Date · Check Again")
+        case .current: return localized("update.check", fallback: "Check for App Updates…")
+        case .failed: return localized("update.failed", fallback: "Update Check Failed · Try Again")
+        }
+    }
+
+    var releaseTitle: String {
+        guard let available else { return localized("update.none", fallback: "No Confirmed App Update") }
+        return String(format: localized("update.available", fallback: "App Update %@ Available · Open Release Page…"), available.version.tag)
+    }
+
+    var accessibilityLabel: String {
+        available == nil ? "Codex Pet Limit Rings" : "Codex Pet Limit Rings · " + releaseTitle
+    }
+}
+
 struct LimitBucket {
     var usedPercent: Double
     var windowMinutes: Double?
@@ -637,7 +884,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.16"
+    var version = "1.0.17"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -3712,7 +3959,7 @@ final class LimitRingView: NSView {
     }
 }
 
-final class LimitRingsApp: NSObject, NSMenuDelegate {
+final class LimitRingsApp: NSObject, NSMenuDelegate, NSMenuItemValidation {
     private let config: LimitRingsConfig
     private let stateReader: LimitStateReader
     private let liveClient: AppServerLiveClient
@@ -3739,6 +3986,11 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     }
     private var showRingsItem: NSMenuItem?
     private var notificationsItem: NSMenuItem?
+    private var releaseCheckItem: NSMenuItem?
+    private var releasePageItem: NSMenuItem?
+    private var automaticReleaseCheckItem: NSMenuItem?
+    private var releaseCheckTimer: Timer?
+    private let releaseChecker: ReleaseUpdateChecker
     private var stateTimer: Timer?
     private var usageTimer: Timer?
     private var fullSnapshotWatchdogSource: DispatchSourceTimer?
@@ -3794,8 +4046,12 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     private var codexCLISourceName = "not-found"
     private var codexCLIVersion: String?
 
-    init(config: LimitRingsConfig) {
+    init(config: LimitRingsConfig, releaseChecker: ReleaseUpdateChecker? = nil) {
         self.config = config
+        self.releaseChecker = releaseChecker ?? ReleaseUpdateChecker(
+            currentVersion: ReleaseVersion("v" + AppServerClientInfo().version)!,
+            automatic: automaticReleaseChecksFromStoredValue(UserDefaults.standard.object(forKey: automaticReleaseChecksDefaultsKey))
+        )
         self.stateReader = LimitStateReader(logsPath: config.logsPath)
         self.liveClient = AppServerLiveClient(codexHome: config.codexHome)
         self.frameReader = PetFrameReader(
@@ -3825,9 +4081,11 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         super.init()
         configureLiveClient()
+        self.releaseChecker.onChange = { [weak self] in self?.updateReleaseMenuItems() }
     }
 
     deinit {
+        releaseCheckTimer?.invalidate()
         stateTimer?.invalidate()
         usageTimer?.invalidate()
         fullSnapshotWatchdogSource?.cancel()
@@ -3848,6 +4106,10 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
 
     func run() {
         installStatusMenu()
+        releaseChecker.automaticCheckIfDue()
+        releaseCheckTimer = Timer.scheduledTimer(withTimeInterval: ReleaseUpdateChecker.interval, repeats: true) { [weak self] _ in
+            self?.releaseChecker.automaticCheckIfDue()
+        }
         updateState()
         updateDailyUsageMenu()
         liveClient.start()
@@ -4367,6 +4629,8 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
             keyEquivalent: "q"
         )
         quitItem.target = self
+        installReleaseMenuItems(in: menu)
+        menu.addItem(.separator())
         menu.addItem(quitItem)
 
         item.menu = menu
@@ -4376,6 +4640,63 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         updateConnectionHealthMenu()
         updateShowRingsMenuItem()
         updateNotificationsMenuItem()
+    }
+
+    private func installReleaseMenuItems(in menu: NSMenu) {
+        let check = NSMenuItem(title: "", action: #selector(checkForRelease(_:)), keyEquivalent: "")
+        check.target = self
+        releaseCheckItem = check
+        menu.addItem(check)
+        let page = NSMenuItem(title: "", action: #selector(openReleasePage(_:)), keyEquivalent: "")
+        page.target = self
+        releasePageItem = page
+        menu.addItem(page)
+        let automatic = NSMenuItem(
+            title: localized("update.automatic", fallback: "Automatically Check for App Updates"),
+            action: #selector(toggleAutomaticReleaseChecks(_:)), keyEquivalent: ""
+        )
+        automatic.target = self
+        automaticReleaseCheckItem = automatic
+        menu.addItem(automatic)
+        updateReleaseMenuItems()
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem === releaseCheckItem { return releaseChecker.status != .checking }
+        if menuItem === releasePageItem { return releaseChecker.available != nil }
+        return true
+    }
+
+    private func updateReleaseMenuItems() {
+        // Keep these item identities and positions stable while the menu is tracking.
+        releaseCheckItem?.title = releaseChecker.checkTitle
+        releaseCheckItem?.isEnabled = releaseChecker.status != .checking
+        releasePageItem?.title = releaseChecker.releaseTitle
+        releasePageItem?.isEnabled = releaseChecker.available != nil
+        automaticReleaseCheckItem?.state = releaseChecker.automatic ? .on : .off
+        if let button = statusItem?.button {
+            let label = releaseChecker.accessibilityLabel
+            button.toolTip = label
+            button.setAccessibilityLabel(label)
+            button.image = makeStatusBarIcon()
+        }
+    }
+
+    @objc private func checkForRelease(_ sender: Any?) { releaseChecker.check() }
+
+    @objc private func openReleasePage(_ sender: Any?) {
+        guard let release = releaseChecker.available else { return }
+        NSWorkspace.shared.open(release.pageURL)
+    }
+
+    @objc private func toggleAutomaticReleaseChecks(_ sender: Any?) {
+        let enabled = !releaseChecker.automatic
+        UserDefaults.standard.set(enabled, forKey: automaticReleaseChecksDefaultsKey)
+        releaseChecker.setAutomatic(enabled)
+        releaseCheckTimer?.invalidate()
+        releaseCheckTimer = enabled ? Timer.scheduledTimer(withTimeInterval: ReleaseUpdateChecker.interval, repeats: true) { [weak self] _ in
+            self?.releaseChecker.automaticCheckIfDue()
+        } : nil
     }
 
     private func makeStatusBarIcon() -> NSImage {
@@ -4407,6 +4728,20 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
         inner.lineWidth = 1.6
         inner.lineCapStyle = .round
         inner.stroke()
+
+        if releaseChecker.available != nil {
+            // An upward arrow adds a shape cue in both light and dark menu bars.
+            let arrow = NSBezierPath()
+            arrow.move(to: NSPoint(x: 14.5, y: 1.5))
+            arrow.line(to: NSPoint(x: 14.5, y: 7))
+            arrow.move(to: NSPoint(x: 12, y: 4.5))
+            arrow.line(to: NSPoint(x: 14.5, y: 7))
+            arrow.line(to: NSPoint(x: 17, y: 4.5))
+            arrow.lineWidth = 1.6
+            arrow.lineCapStyle = .round
+            arrow.lineJoinStyle = .round
+            arrow.stroke()
+        }
 
         image.unlockFocus()
         image.isTemplate = true
@@ -4659,6 +4994,9 @@ final class LimitRingsApp: NSObject, NSMenuDelegate {
     }
 
 #if LIMIT_RINGS_TESTING
+    func installReleaseMenuForTesting(_ menu: NSMenu) { installReleaseMenuItems(in: menu) }
+    func releaseStatusIconForTesting() -> NSImage { makeStatusBarIcon() }
+
     func installConnectionHealthMenuForTesting(_ menu: NSMenu) {
         connectionHealthMenu = menu
         menu.delegate = self

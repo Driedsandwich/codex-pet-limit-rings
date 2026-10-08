@@ -6,6 +6,13 @@
 "menu.notifications" = "Limit Notifications";
 "menu.refresh" = "Refresh Now";
 "menu.quit" = "Quit Codex Pet Limit Rings";
+"update.check" = "Check for App Updates…";
+"update.checking" = "Checking for App Updates…";
+"update.current" = "App Is Up to Date · Check Again";
+"update.failed" = "Update Check Failed · Try Again";
+"update.none" = "No Confirmed App Update";
+"update.available" = "App Update %@ Available · Open Release Page…";
+"update.automatic" = "Automatically Check for App Updates";
 "summary.short" = "Short %@";
 "summary.weekly" = "Weekly %@";
 "summary.noData" = "No current Codex limit data";

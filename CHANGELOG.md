@@ -2,6 +2,14 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
+## Unreleased
+
+### 1.0.17 — Release Checks And Update Guidance
+
+- Check this fork's public releases at startup and every 24 hours, with a manual check and a default-on automatic-check toggle.
+- Show a shape-based menu-bar update indicator and a link to the validated release page. Keep installation under the user's control, without automatic downloads or new notification permissions.
+- Use anonymous, ephemeral, bounded requests; validate stable versions, release URLs, and both distribution assets. Reject redirects, invalid metadata, and late callbacks after checks are disabled. Keep previews and diagnostics offline for this feature.
+
 ## 1.0.16 - 2026-10-08
 
 ### ChatGPT 26.1002 Pet Surface Compatibility

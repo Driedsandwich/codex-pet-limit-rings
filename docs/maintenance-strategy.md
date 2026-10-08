@@ -31,7 +31,7 @@ Treat initialization and read deadlines as client-side recovery policy, not as a
 - Keep the pinned v1.0.0 long-term compatibility baseline under its documented legacy build-path exception, then separately require the current candidate and latest public artifact to pass all current gates.
 - Keep upstream-compatible fixes isolated where practical. The broader downstream product remains independently maintained.
 
-A release-notice feature is planned but is not implemented in v1.0.16. It is separate from automatic installation; the current app does not check for, download, or install its own updates.
+The v1.0.17 source adds release checks and update guidance. Keep this path separate from account access: use only anonymous public metadata from this fork, keep the result in memory, and open a validated release page only on user action. Automatic checks are enabled by default and can be disabled. Updates are never downloaded or installed automatically. Existing v1.0.16 and older installations need one manual update to gain this feature.
 
 ## Deferred Scope
 
