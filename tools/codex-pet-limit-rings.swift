@@ -637,7 +637,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.15"
+    var version = "1.0.16"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -2269,8 +2269,9 @@ func isAsymmetricCodexPetAvatarOverlay(
     // ChatGPT 26.917's native pet drawing window reserves asymmetric horizontal
     // space for activity. Its 384px viewport, 80x87 minimum drawing canvas and
     // spring overshoot produce offsets [-688, 440], hence a 1128px panel whose
-    // center is 164px left of the pet. This is a separate, tightly matched
-    // compatibility profile, not a wider tolerance for arbitrary app windows.
+    // center is 164px left of the pet. ChatGPT 26.1002 uses a 1132px panel
+    // centered 166px left of the pet. Keep these paired geometry profiles
+    // separate instead of widening the match for arbitrary app windows.
     guard name == nil || name == "ChatGPT",
           let ownerPID,
           officialCodexPIDs.contains(ownerPID),
@@ -2281,15 +2282,18 @@ func isAsymmetricCodexPetAvatarOverlay(
           let display = knownDisplayBounds.first(where: { $0.contains(mascotReference.center) }),
           display.width >= 384,
           bounds.contains(mascotReference.center),
-          abs(bounds.width - 1128) <= 1,
           bounds.height > display.height,
           bounds.height >= bounds.width * 1.5 else {
+        return false
+    }
+    let profiles: [(width: CGFloat, petOffsetX: CGFloat)] = [(1128, 164), (1132, 166)]
+    guard let profile = profiles.first(where: { abs(bounds.width - $0.width) <= 1 }) else {
         return false
     }
     // The drawing panel may cross a display edge even though the pet does not.
     // Match the panel to the pet's rounded canvas center, never its own center.
     let expectedCenter = CGPoint(
-        x: mascotReference.minX + (mascotReference.width / 2).rounded() - 164,
+        x: mascotReference.minX + (mascotReference.width / 2).rounded() - profile.petOffsetX,
         y: mascotReference.minY + (mascotReference.height.rounded() / 2).rounded() - 0.5
     )
     return abs(bounds.midX - expectedCenter.x) <= 2
