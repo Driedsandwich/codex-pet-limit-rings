@@ -31,7 +31,7 @@ Treat initialization and read deadlines as client-side recovery policy, not as a
 - Keep the pinned v1.0.0 long-term compatibility baseline under its documented legacy build-path exception, then separately require the current candidate and latest public artifact to pass all current gates.
 - Keep upstream-compatible fixes isolated where practical. The broader downstream product remains independently maintained.
 
-The v1.0.17 source adds release checks and update guidance. Keep this path separate from account access: use only anonymous public metadata from this fork, keep the result in memory, and open a validated release page only on user action. Automatic checks are enabled by default and can be disabled. Updates are never downloaded or installed automatically. Existing v1.0.16 and older installations need one manual update to gain this feature.
+Version 1.0.17 includes release checks and update guidance. Keep this path separate from account access: use only anonymous public metadata from this fork, keep the result in memory, and open a validated release page only on user action. Automatic checks are enabled by default at startup and every 24 hours while running; they can be disabled, and manual checks remain available. Show update notices in the menu bar and menu without sending macOS notifications. The app never downloads or installs updates. Existing v1.0.16 and older installations need one manual update to gain this feature.
 
 ## Deferred Scope
 

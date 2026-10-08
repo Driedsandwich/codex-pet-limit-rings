@@ -1,18 +1,19 @@
 # Release Checklist
 
-## Published v1.0.16 Evidence
+## Published v1.0.17 Evidence
 
-- [PR #54](https://github.com/Driedsandwich/codex-pet-limit-rings/pull/54) merged at `75a81ac4467dc16b3f4b55e9e3654622b49fcd66` (tree `f35dc26370f0624f3d1e2ee72ea8fa7767412348`); its tested head was `b378056f2975b5b00304d74eca16c7a0fd106fd8`.
-- [PR CI](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/37745709429) and [main CI](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/37745944630) succeeded on macOS 15 and 26.
-- [v1.0.16 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.16) was published on 2026-10-08 at 08:23:40 UTC (release ID `406594246`) and is latest. Annotated tag `a1cb0477f970ba8327676e283d57ac8bffba565e` targets the merge commit above.
-- ZIP SHA-256: `0518630feb3b8604814df288bb62324075c1b048afff88a10358627a5441fae5`. Version/build `1.0.16 / 25`, arm64, minimum macOS 15.0, ad-hoc signed and not notarized.
-- The public ZIP was downloaded again and passed the fixed-SHA artifact smoke test. Publication reused the previously verified package without rebuilding or reinstalling it.
-- Every installed bundle file matched the package. Separate live diagnostics reported a ready app-server, current rate-limit and usage data, and a readable pet frame on Codex 26.1002.52244 / CLI 0.162.0-alpha.2. The operator confirmed visible rings.
+- [PR #56](https://github.com/Driedsandwich/codex-pet-limit-rings/pull/56) merged at `0dd8c9e6ff69d8a7ea32188be6b04e366e069ac6` (tree `e2af20ada1bc9a9ef5fd5a7ead528961b113dde8`); its tested head was `921ece9a36fc41551b4040395ca9db8af482060e`.
+- [Source push CI](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/37752069191) and [main CI](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/37752659102) succeeded on macOS 15 and 26.
+- [v1.0.17 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.17) was published on 2026-10-08 at 08:55:01 UTC (release ID `406621833`) and is latest, non-draft, and non-prerelease. Annotated tag `033243dbe3bb45eff51706e4cc9b091ecde4cad7` targets the merge commit above.
+- ZIP SHA-256: `b1631c363510028524b9196c33213b2839c62d366dedea9b41d8c9744ff20f31`. Version/build `1.0.17 / 26`, arm64, minimum macOS 15.0, ad-hoc signed and not notarized.
+- Regression tests, independent review, and the full package gate passed. The public ZIP was downloaded again and passed the fixed-SHA artifact smoke test.
+- The actual Swift anonymous transport successfully fetched and validated public v1.0.16 metadata and distribution assets when that release was latest. Periodic scheduling has offline test coverage, not a full day of wall-clock observation.
+- The existing local v1.0.16 installation was not replaced. No v1.0.17 installation, new live-account diagnostic, or visual confirmation is claimed.
 
 ```bash
 EXPECTED_MIN_OS=15.0 \
-EXPECTED_SHA256=0518630feb3b8604814df288bb62324075c1b048afff88a10358627a5441fae5 \
-  tools/smoke-release-artifact.sh 1.0.16
+EXPECTED_SHA256=b1631c363510028524b9196c33213b2839c62d366dedea9b41d8c9744ff20f31 \
+  tools/smoke-release-artifact.sh 1.0.17
 ```
 
 ## Source And Scope
@@ -39,12 +40,12 @@ Build the release package and checksum:
 tools/package-release.sh
 ```
 
-Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The published v1.0.16 package is ad-hoc signed and not notarized. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, confirm English and Japanese localization resources are present, and confirm the re-extracted binary contains no local build-machine path.
+Inspect the generated ZIP and `.sha256` file under ignored `dist/`. The published v1.0.17 package is ad-hoc signed and not notarized. Confirm the packaged binary and `LSMinimumSystemVersion` both report macOS `15.0`, confirm English and Japanese localization resources are present, and confirm the re-extracted binary contains no local build-machine path.
 
 The packaging command verifies its checksum before returning. Automated previews and diagnostics use `tools/fixture-codex-app-server.py` with isolated state and assert the fixture version and ready response; they do not access the real account. The Runtime Gate below separately checks the live installed app. To repeat the checksum check manually, run it from `dist/` so the relative archive name resolves:
 
 ```bash
-(cd dist && shasum -a 256 -c CodexPetLimitRings-v1.0.16-macos-arm64.zip.sha256)
+(cd dist && shasum -a 256 -c CodexPetLimitRings-v1.0.17-macos-arm64.zip.sha256)
 ```
 
 ## Runtime Gate
@@ -67,6 +68,21 @@ Confirm the menu-bar source is `App Server`, `Cached`, or `Local`, full limit de
 - Create the fork, push, upstream PR, and downstream release as separate operations.
 - Record the fork URL, commit/tag, CI result, PR URL/status, and known limitations.
 - After publication and a fixed-SHA download check, update the latest-release CI pin and current download instructions without changing historical evidence.
+
+### Published v1.0.16 Evidence
+
+- [PR #54](https://github.com/Driedsandwich/codex-pet-limit-rings/pull/54) merged at `75a81ac4467dc16b3f4b55e9e3654622b49fcd66` (tree `f35dc26370f0624f3d1e2ee72ea8fa7767412348`); its tested head was `b378056f2975b5b00304d74eca16c7a0fd106fd8`.
+- [PR CI](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/37745709429) and [main CI](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/37745944630) succeeded on macOS 15 and 26.
+- [v1.0.16 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.16) was published on 2026-10-08 at 08:23:40 UTC (release ID `406594246`) and was latest at publication. Annotated tag `a1cb0477f970ba8327676e283d57ac8bffba565e` targets the merge commit above.
+- ZIP SHA-256: `0518630feb3b8604814df288bb62324075c1b048afff88a10358627a5441fae5`. Version/build `1.0.16 / 25`, arm64, minimum macOS 15.0, ad-hoc signed and not notarized.
+- The public ZIP was downloaded again and passed the fixed-SHA artifact smoke test. Publication reused the previously verified package without rebuilding or reinstalling it.
+- Every installed bundle file matched the package. Separate live diagnostics reported a ready app-server, current rate-limit and usage data, and a readable pet frame on Codex 26.1002.52244 / CLI 0.162.0-alpha.2. The operator confirmed visible rings.
+
+```bash
+EXPECTED_MIN_OS=15.0 \
+EXPECTED_SHA256=0518630feb3b8604814df288bb62324075c1b048afff88a10358627a5441fae5 \
+  tools/smoke-release-artifact.sh 1.0.16
+```
 
 ### Published v1.0.15 Evidence
 
