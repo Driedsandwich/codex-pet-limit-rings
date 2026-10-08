@@ -1,15 +1,30 @@
 # Publication Record
 
-status: v1.0.16-released
+status: v1.0.17-released
 
-## Current Release: v1.0.16 (2026-10-08)
+## Current Release: v1.0.17 (2026-10-08)
+
+- Feature PR: [#56](https://github.com/Driedsandwich/codex-pet-limit-rings/pull/56), merged; tested PR head `921ece9a36fc41551b4040395ca9db8af482060e`.
+- Release target: `0dd8c9e6ff69d8a7ea32188be6b04e366e069ac6`.
+- Target tree: `e2af20ada1bc9a9ef5fd5a7ead528961b113dde8`.
+- Source push CI [37752069191](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/37752069191) and main CI [37752659102](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/37752659102) passed on macOS 15 and 26.
+- Annotated tag object: `033243dbe3bb45eff51706e4cc9b091ecde4cad7`; its target is the release commit above.
+- Public latest Release: [v1.0.17](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.17), published October 8, 2026 at 08:55:01 UTC; release ID `406621833`, not a draft or prerelease.
+- ZIP SHA-256: `b1631c363510028524b9196c33213b2839c62d366dedea9b41d8c9744ff20f31`; the verified local artifact and re-downloaded public bytes agree.
+- Apple silicon `arm64`, macOS `15.0` in Info.plist and Mach-O, version `1.0.17`, build `26`; ad-hoc signed, not notarized.
+- Regression tests, independent review, and the full package gate passed. The fixed-SHA published-artifact gate passed checksum, archive allowlist, signature, architecture, version, deployment-target, localization, local-path, synthetic-preview, and fixture-diagnostic checks.
+- A probe using the actual Swift anonymous transport accepted the public v1.0.16 metadata and distribution assets while that release was latest. Periodic scheduling was tested offline; no full-day wall-clock observation is claimed.
+- Publication did not replace the existing local v1.0.16 installation. No v1.0.17 installation, new real-account diagnostic, or visual confirmation is claimed; the v1.0.16 runtime evidence remains in its dated record below.
+- Release checks use fixed anonymous public GitHub metadata at startup and every 24 hours, with a default-on toggle and manual check. An update adds a menu-bar arrow and validated release-page link; the app does not download, install, send macOS update notifications, or transmit Codex account data. See [release notes](docs/release-notes-v1.0.17.md).
+
+## Release: v1.0.16 (2026-10-08)
 
 - Compatibility PR: [#54](https://github.com/Driedsandwich/codex-pet-limit-rings/pull/54), merged; tested PR head `b378056f2975b5b00304d74eca16c7a0fd106fd8`.
 - Release target: `75a81ac4467dc16b3f4b55e9e3654622b49fcd66`.
 - Target tree: `f35dc26370f0624f3d1e2ee72ea8fa7767412348`.
 - PR CI [37745709429](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/37745709429) and main CI [37745944630](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/37745944630) passed on macOS 15 and 26.
 - Annotated tag object: `a1cb0477f970ba8327676e283d57ac8bffba565e`; its target is the release commit above.
-- Public latest Release: [v1.0.16](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.16), published October 8, 2026 at 08:23:40 UTC; release ID `406594246`.
+- Public Release: [v1.0.16](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.16), published October 8, 2026 at 08:23:40 UTC; release ID `406594246`, latest at publication.
 - ZIP SHA-256: `0518630feb3b8604814df288bb62324075c1b048afff88a10358627a5441fae5`; the previously verified local artifact and re-downloaded public bytes agree.
 - Apple silicon `arm64`, macOS `15.0` in Info.plist and Mach-O, version `1.0.16`, build `25`; ad-hoc signed, not notarized.
 - The fixed-SHA published-artifact gate passed checksum, archive allowlist, signature, architecture, version, deployment-target, localization, local-path, synthetic-preview, and fixture-diagnostic checks. Publication reused the previously verified package without rebuilding or reinstalling it.
@@ -72,6 +87,7 @@ status: v1.0.16-released
 - v1.0.14 release merge commit: `c53255e47155930b8ebc83f97aa836a9d1b5ebf1`
 - v1.0.15 release merge commit: `d8ec339acb458d39d5cc3263044bf597db85947d`
 - v1.0.16 release merge commit: `75a81ac4467dc16b3f4b55e9e3654622b49fcd66`
+- v1.0.17 release merge commit: `0dd8c9e6ff69d8a7ea32188be6b04e366e069ac6`
 
 ## Publication Targets
 
