@@ -41,6 +41,8 @@ For the complete download, checksum, backup, LaunchAgent, diagnostic, and rollba
 
 Version 1.0.17 adds release checks and update guidance while retaining v1.0.16's fix for ChatGPT 26.1002's changed native pet drawing panel. Earlier panel profiles and bundled CLI discovery remain supported; no new permission or Codex configuration change is required.
 
+The v1.0.18 source candidate also supports ChatGPT 26.1007's display-sized pet panel on multiple displays. It requires the current display and saved pet settings to agree; see the [compatibility notes](docs/release-notes-v1.0.18.md). The download above remains v1.0.17 until the new package is published.
+
 To build and install the current source with launch at login:
 
 ```bash

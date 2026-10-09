@@ -41,6 +41,7 @@ struct LimitRingsTests {
             try testDesktopPetSizeContract()
             try testOversizedAvatarOverlayCompatibility()
             try testAsymmetricAvatarOverlayCompatibility()
+            try testDisplaySizedAvatarOverlayCompatibility()
             try testPetStateSnapshotCacheAndMouseDownGate()
             try testRingAnimationVisibilityGate()
             try testHoverReadoutInvalidatesOnlyOnTransitions()
@@ -840,6 +841,138 @@ struct LimitRingsTests {
             reader.readPetFramesTopLeft(requireLiveOverlay: true) == nil,
             "expected closed avatar state to reject the otherwise matching oversized overlay"
         )
+    }
+
+    private static func testDisplaySizedAvatarOverlayCompatibility() throws {
+        let root = try temporaryDirectory(named: "display-sized-avatar-overlay")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent("state.json")
+        let configURL = root.appendingPathComponent("config.toml")
+        let display = CGRect(x: 1_920, y: 0, width: 1_920, height: 1_080)
+        let otherDisplay = CGRect(x: 0, y: 0, width: 1_920, height: 1_080)
+        let officialPID: pid_t = 61_866
+        var activeDisplays = [otherDisplay, display]
+        var origin = CGPoint(x: 3_632, y: 853)
+        var savedDisplay: CGRect? = display
+        var open: Bool? = true
+        var surface = display
+        var name: String? = "ChatGPT"
+        var pid = officialPID
+        var layer = 3
+        var onScreen = true
+        var width: Int? = 80
+        var visible: Bool? = true
+
+        func rectPayload(_ rect: CGRect) -> [String: Any] {
+            ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height]
+        }
+        func writeInputs() throws {
+            var bounds: [String: Any] = [
+                "x": origin.x, "y": origin.y,
+                "byDisplayId": ["3": ["displayBounds": rectPayload(display)]]
+            ]
+            if let savedDisplay { bounds["displayBounds"] = rectPayload(savedDisplay) }
+            var state: [String: Any] = ["electron-avatar-overlay-bounds": bounds]
+            if let open { state["electron-avatar-overlay-open"] = open }
+            try JSONSerialization.data(withJSONObject: state).write(to: stateURL, options: .atomic)
+            var config = "[desktop]\n"
+            if let width { config += "avatar-overlay-mascot-width-px = \(width)\n" }
+            if let visible { config += "avatar-overlay-pet-visible = \(visible)\n" }
+            try config.write(to: configURL, atomically: true, encoding: .utf8)
+        }
+        func window() -> [String: Any] {
+            var result: [String: Any] = [
+                kCGWindowOwnerPID as String: pid,
+                kCGWindowIsOnscreen as String: onScreen,
+                kCGWindowLayer as String: layer,
+                kCGWindowBounds as String: [
+                    "X": surface.minX, "Y": surface.minY,
+                    "Width": surface.width, "Height": surface.height
+                ]
+            ]
+            if let name { result[kCGWindowName as String] = name }
+            return result
+        }
+        // Exercise the production window parser and classifier, rather than
+        // returning an already-classified surface from the fixture.
+        let reader = PetFrameReader(
+            globalStatePath: stateURL,
+            petSizeConfigPath: configURL,
+            liveInteractiveControlProvider: { _ in nil },
+            activeDisplayBoundsProvider: { activeDisplays },
+            liveWindowInfoProvider: { [window()] },
+            officialCodexPIDsProvider: { [officialPID] }
+        )
+        func read() -> PetFramesTopLeft? { reader.readPetFramesTopLeft(requireLiveOverlay: true) }
+        for petWidth in [80, 160, 224] {
+            width = petWidth
+            for title in [nil, "ChatGPT"] as [String?] {
+                name = title
+                try writeInputs()
+                guard let frames = read() else { throw LimitRingsTestError.failed("expected display-sized overlay at width \(petWidth)") }
+                let size = CGSize(width: CGFloat(petWidth), height: CGFloat(petWidth) * codexPetCanvasHeight / codexPetCanvasWidth)
+                let pet = CGRect(origin: origin, size: size)
+                try expect(frames.mascot == pet && frames.overlay == pet && frames.usedLiveOverlay,
+                           "expected saved origin and configured canvas for placement and drag hit target")
+                try expect(frames.overlay != surface, "expected full display panel to remain identity evidence only")
+            }
+        }
+        width = 80
+        name = "ChatGPT"
+        func reject(_ label: String) throws {
+            try writeInputs()
+            try expect(read() == nil, "expected display-sized rejection for \(label)")
+        }
+        savedDisplay = otherDisplay; try reject("same-resolution wrong current origin"); savedDisplay = display
+        savedDisplay = nil; try reject("historical-only and missing current display"); savedDisplay = display
+        activeDisplays = [otherDisplay, CGRect(x: -1_920, y: 0, width: 1_920, height: 1_080)]
+        try reject("disconnected current display"); activeDisplays = [otherDisplay, display]
+        activeDisplays = [display]; try reject("single display"); activeDisplays = [otherDisplay, display]
+        width = nil; try reject("missing configured size"); width = 80
+        visible = false; try reject("pet hidden")
+        visible = nil; try reject("unknown visibility")
+        visible = true; try writeInputs(); try expect(read() != nil, "expected cache to detect hidden-to-visible config change")
+        visible = false; try reject("cache visible-to-hidden config change")
+        visible = true; try writeInputs(); try expect(read() != nil, "expected cache to restore visible pet")
+        open = false; try reject("closed overlay"); open = nil; try reject("unknown open state"); open = true
+        onScreen = false; try reject("offscreen window"); onScreen = true
+        pid = 99; try reject("foreign process"); pid = officialPID
+        layer = 2; try reject("wrong layer"); layer = 3
+        name = "Other"; try reject("wrong title"); name = "ChatGPT"
+        for changed in [CGRect(x: 1_922, y: 0, width: 1_920, height: 1_080),
+                        CGRect(x: 1_920, y: 2, width: 1_920, height: 1_080),
+                        CGRect(x: 1_920, y: 0, width: 1_922, height: 1_080),
+                        CGRect(x: 1_920, y: 0, width: 1_920, height: 1_082)] {
+            surface = changed; try reject("window rectangle component mismatch")
+        }
+        surface = display
+        origin = CGPoint(x: 3_900, y: 853); try reject("pet center outside current display")
+        origin = CGPoint(x: 3_632, y: 853)
+
+        let injectedReader = PetFrameReader(
+            globalStatePath: stateURL, petSizeConfigPath: configURL,
+            livePetSurfaceProvider: { _, _ in LiveCodexPetSurface(bounds: surface, kind: .displaySizedAvatarOverlay) },
+            liveInteractiveControlProvider: { _ in nil },
+            activeDisplayBoundsProvider: { activeDisplays }
+        )
+        func rejectInjected(_ label: String) throws {
+            try writeInputs()
+            try expect(injectedReader.readPetFramesTopLeft(requireLiveOverlay: true) == nil,
+                       "expected injected profile to retain \(label) guard")
+        }
+        width = nil; try rejectInjected("size"); width = 80
+        visible = nil; try rejectInjected("visibility"); visible = true
+        savedDisplay = nil; try rejectInjected("current display"); savedDisplay = otherDisplay
+        try rejectInjected("current display geometry"); savedDisplay = display
+        activeDisplays = [otherDisplay]; try rejectInjected("active display"); activeDisplays = [otherDisplay, display]
+        open = nil; try rejectInjected("explicit open state"); open = true
+        try writeInputs()
+        try expect(injectedReader.readPetFramesTopLeft(requireLiveOverlay: true)?.overlay.width == 80,
+                   "expected valid injected profile to retain pet-sized geometry")
+        try expect(codexDesktopPetVisible(fromTOML: "[other]\navatar-overlay-pet-visible = true\n") == nil,
+                   "expected visibility only from desktop section")
+        try expect(codexDesktopPetVisible(fromTOML: "[desktop]\navatar-overlay-pet-visible = invalid\n") == nil,
+                   "expected malformed visibility to remain unknown")
     }
 
     private static func testAsymmetricAvatarOverlayCompatibility() throws {

@@ -884,7 +884,7 @@ private struct AppServerInitializeParams: Encodable {
 private struct AppServerClientInfo: Encodable {
     var name = "codex-pet-limit-rings"
     var title = "Codex Pet Limit Rings"
-    var version = "1.0.17"
+    var version = "1.0.18"
 }
 
 private struct AppServerInitializedNotification: Encodable {
@@ -2433,11 +2433,71 @@ func codexDesktopPetSize(fromTOML contents: String) -> CGSize? {
     return nil
 }
 
+// Keep visibility in the same read-only config snapshot as the canvas size.
+func codexDesktopPetVisible(fromTOML contents: String) -> Bool? {
+    var isDesktopSection = false
+    for rawLine in contents.split(whereSeparator: \.isNewline) {
+        let line = rawLine.trimmingCharacters(in: .whitespaces)
+        guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+        if line.hasPrefix("[") {
+            isDesktopSection = line == "[desktop]"
+            continue
+        }
+        guard isDesktopSection else { continue }
+        let setting = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
+        let parts = setting.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              parts[0].trimmingCharacters(in: .whitespaces) == "avatar-overlay-pet-visible" else { continue }
+        switch parts[1].trimmingCharacters(in: .whitespaces) {
+        case "true": return true
+        case "false": return false
+        default: return nil
+        }
+    }
+    return nil
+}
+
+func activeCodexPetDisplayBounds() -> [CGRect] {
+    var count: UInt32 = 0
+    guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
+    var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+    guard CGGetActiveDisplayList(count, &displays, &count) == .success else { return [] }
+    return displays.prefix(Int(count)).map { CGDisplayBounds($0) }
+}
+
+func codexPetDisplayRectsMatch(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+    [lhs.minX - rhs.minX, lhs.minY - rhs.minY,
+     lhs.width - rhs.width, lhs.height - rhs.height].allSatisfy { $0.isFinite && abs($0) <= 1 }
+}
+
+func isPlaceableDisplaySizedCodexPetOverlay(
+    bounds: CGRect,
+    mascotReference: CGRect,
+    currentDisplayBounds: CGRect?,
+    activeDisplayBounds: [CGRect],
+    configuredPetSize: CGSize?,
+    petVisible: Bool?,
+    avatarOverlayOpen: Bool?
+) -> Bool {
+    guard petVisible == true, avatarOverlayOpen == true,
+          let size = configuredPetSize,
+          size.width >= codexPetMinimumWidth, size.width <= codexPetMaximumWidth,
+          size.width.isFinite, size.height.isFinite,
+          abs(size.height - size.width * codexPetCanvasHeight / codexPetCanvasWidth) <= 1,
+          let display = currentDisplayBounds, display.width > 0, display.height > 0,
+          activeDisplayBounds.count > 1,
+          activeDisplayBounds.contains(where: { codexPetDisplayRectsMatch(display, $0) }),
+          codexPetDisplayRectsMatch(bounds, display),
+          display.contains(mascotReference.center) else { return false }
+    return true
+}
+
 enum CodexPetSurfaceKind: Equatable {
     case mascotEffect
     case directMascot
     case oversizedAvatarOverlay
     case asymmetricAvatarOverlay
+    case displaySizedAvatarOverlay
 }
 
 struct LiveCodexPetSurface: Equatable {
@@ -2451,7 +2511,7 @@ func preferredCodexPetSurface(
     hasConfiguredPetSize: Bool
 ) -> LiveCodexPetSurface? {
     surfaces.filter {
-        $0.kind != .asymmetricAvatarOverlay || hasConfiguredPetSize
+        ($0.kind != .asymmetricAvatarOverlay && $0.kind != .displaySizedAvatarOverlay) || hasConfiguredPetSize
     }.min {
         // Only placeable drawing panels take precedence over compact controls.
         if ($0.kind == .directMascot) != ($1.kind == .directMascot) {
@@ -2591,12 +2651,24 @@ func codexPetSurfaceKind(
     mascotReference: CGRect,
     knownDisplayBounds: [CGRect] = [],
     isOnScreen: Bool = true,
-    requiresAlignedDirectSurface: Bool = false
+    requiresAlignedDirectSurface: Bool = false,
+    currentDisplayBounds: CGRect? = nil,
+    activeDisplayBounds: [CGRect] = [],
+    configuredPetSize: CGSize? = nil,
+    petVisible: Bool? = nil,
+    avatarOverlayOpen: Bool? = nil
 ) -> CodexPetSurfaceKind? {
     guard isOnScreen,
           let ownerPID,
           officialCodexPIDs.contains(ownerPID),
           layer > 0 else { return nil }
+    if layer == 3, name == nil || name == "ChatGPT",
+       isPlaceableDisplaySizedCodexPetOverlay(
+            bounds: bounds, mascotReference: mascotReference,
+            currentDisplayBounds: currentDisplayBounds, activeDisplayBounds: activeDisplayBounds,
+            configuredPetSize: configuredPetSize, petVisible: petVisible,
+            avatarOverlayOpen: avatarOverlayOpen
+       ) { return .displaySizedAvatarOverlay }
     if isAsymmetricCodexPetAvatarOverlay(
         name: name,
         ownerPID: ownerPID,
@@ -2738,6 +2810,9 @@ final class PetFrameReader {
     private let liveMascotEffectProvider: ((CGRect) -> CGRect?)?
     private let livePetSurfaceProvider: ((CGRect, [CGRect]) -> LiveCodexPetSurface?)?
     private let liveInteractiveControlProvider: ((CGRect) -> CGRect?)?
+    private let activeDisplayBoundsProvider: () -> [CGRect]
+    private let liveWindowInfoProvider: (() -> [[String: Any]])?
+    private let officialCodexPIDsProvider: (() -> Set<pid_t>)?
     private let snapshotLock = NSLock()
     private var cachedIdentity: PetStateFileIdentity?
     private var hasCachedIdentity = false
@@ -2746,6 +2821,7 @@ final class PetFrameReader {
     private var cachedPetSizeConfigIdentity: PetStateFileIdentity?
     private var hasCachedPetSizeConfigIdentity = false
     private var cachedConfiguredPetSize: CGSize?
+    private var cachedConfiguredPetVisible: Bool?
     private var petSizeConfigParseCount = 0
 
     init(
@@ -2754,7 +2830,10 @@ final class PetFrameReader {
         liveOverlayProvider: ((CGRect, CGSize) -> CGRect?)? = nil,
         liveMascotEffectProvider: ((CGRect) -> CGRect?)? = nil,
         livePetSurfaceProvider: ((CGRect, [CGRect]) -> LiveCodexPetSurface?)? = nil,
-        liveInteractiveControlProvider: ((CGRect) -> CGRect?)? = nil
+        liveInteractiveControlProvider: ((CGRect) -> CGRect?)? = nil,
+        activeDisplayBoundsProvider: @escaping () -> [CGRect] = activeCodexPetDisplayBounds,
+        liveWindowInfoProvider: (() -> [[String: Any]])? = nil,
+        officialCodexPIDsProvider: (() -> Set<pid_t>)? = nil
     ) {
         self.globalStatePath = globalStatePath
         self.petSizeConfigPath = petSizeConfigPath
@@ -2762,6 +2841,9 @@ final class PetFrameReader {
         self.liveMascotEffectProvider = liveMascotEffectProvider
         self.livePetSurfaceProvider = livePetSurfaceProvider
         self.liveInteractiveControlProvider = liveInteractiveControlProvider
+        self.activeDisplayBoundsProvider = activeDisplayBoundsProvider
+        self.liveWindowInfoProvider = liveWindowInfoProvider
+        self.officialCodexPIDsProvider = officialCodexPIDsProvider
     }
 
     @discardableResult
@@ -2819,6 +2901,7 @@ final class PetFrameReader {
                 hasCachedPetSizeConfigIdentity = false
                 cachedPetSizeConfigIdentity = nil
                 cachedConfiguredPetSize = nil
+                cachedConfiguredPetVisible = nil
             }
             return
         }
@@ -2838,10 +2921,12 @@ final class PetFrameReader {
                 continue
             }
             let configuredSize = codexDesktopPetSize(fromTOML: contents)
+            let configuredVisible = codexDesktopPetVisible(fromTOML: contents)
             snapshotLock.withLock {
                 hasCachedPetSizeConfigIdentity = true
                 cachedPetSizeConfigIdentity = after
                 cachedConfiguredPetSize = configuredSize
+                cachedConfiguredPetVisible = configuredVisible
                 petSizeConfigParseCount += 1
             }
             return
@@ -2867,6 +2952,7 @@ final class PetFrameReader {
         }
         guard let root = currentStateRoot(),
               isAvatarOverlayOpen(root),
+              snapshotLock.withLock({ cachedConfiguredPetVisible }) != false,
               let bounds = root["electron-avatar-overlay-bounds"] as? [String: Any],
               let x = number(bounds["x"]),
               let y = number(bounds["y"]) else {
@@ -2945,6 +3031,10 @@ final class PetFrameReader {
         let persistedMascot = CGRect(origin: persistedMascotOrigin, size: referenceSize)
         let shouldReadLiveEffect = preferLiveOverlay || requireLiveOverlay
         let knownDisplayBounds = knownPetDisplayBounds(in: bounds)
+        let currentDisplay = currentPetDisplayBounds(in: bounds)
+        let activeDisplays = activeDisplayBoundsProvider()
+        let petVisible = snapshotLock.withLock { cachedConfiguredPetVisible }
+        let overlayOpen = currentStateRoot()?["electron-avatar-overlay-open"] as? Bool
         let liveSurface: LiveCodexPetSurface?
         if shouldReadLiveEffect {
             let reference = liveReference ?? persistedMascot
@@ -2958,7 +3048,11 @@ final class PetFrameReader {
                 liveSurface = liveCodexPetSurface(
                     matching: reference,
                     mascotReference: persistedMascot,
-                    knownDisplayBounds: knownDisplayBounds
+                    knownDisplayBounds: knownDisplayBounds,
+                    currentDisplayBounds: currentDisplay,
+                    activeDisplayBounds: activeDisplays,
+                    petVisible: petVisible,
+                    avatarOverlayOpen: overlayOpen
                 )
             }
         } else {
@@ -2975,6 +3069,14 @@ final class PetFrameReader {
             return PetFramesTopLeft(mascot: mascot, overlay: mascot, interactiveControl: nil, usedLiveOverlay: false)
         }
 
+        if liveSurface.kind == .displaySizedAvatarOverlay {
+            guard isPlaceableDisplaySizedCodexPetOverlay(
+                bounds: liveSurface.bounds, mascotReference: persistedMascot,
+                currentDisplayBounds: currentDisplay, activeDisplayBounds: activeDisplays,
+                configuredPetSize: configuredPetSize, petVisible: petVisible,
+                avatarOverlayOpen: overlayOpen
+            ) else { return nil }
+        }
         let liveEffect = liveSurface.bounds
 
         let mascot: CGRect
@@ -2994,7 +3096,7 @@ final class PetFrameReader {
                 width: mascotSize.width,
                 height: mascotSize.height
             )
-        case .oversizedAvatarOverlay, .asymmetricAvatarOverlay:
+        case .oversizedAvatarOverlay, .asymmetricAvatarOverlay, .displaySizedAvatarOverlay:
             if let configuredPetSize {
                 // Current ChatGPT exposes the actual pet canvas width in its
                 // read-only desktop config. The oversized Electron surface is
@@ -3004,7 +3106,7 @@ final class PetFrameReader {
             } else {
                 // The asymmetric profile identifies the drawing window only;
                 // its center cannot reconstruct a missing pet size.
-                guard liveSurface.kind != .asymmetricAvatarOverlay else { return nil }
+                guard liveSurface.kind != .asymmetricAvatarOverlay && liveSurface.kind != .displaySizedAvatarOverlay else { return nil }
                 let derivedSize = modernMascotSize(
                     origin: persistedMascotOrigin,
                     effectBounds: liveEffect,
@@ -3023,7 +3125,7 @@ final class PetFrameReader {
         // The oversized Electron panel is only identity evidence. Passing its
         // full bounds into mouse hit testing would turn most desktop clicks
         // back into live geometry reads, undoing the v1.0.12 performance gate.
-        let isDrawingPanel = liveSurface.kind == .oversizedAvatarOverlay || liveSurface.kind == .asymmetricAvatarOverlay
+        let isDrawingPanel = liveSurface.kind == .oversizedAvatarOverlay || liveSurface.kind == .asymmetricAvatarOverlay || liveSurface.kind == .displaySizedAvatarOverlay
         let trackingOverlay = isDrawingPanel ? mascot : liveEffect
         let interactiveControl: CGRect?
         if let liveInteractiveControlProvider {
@@ -3115,6 +3217,15 @@ final class PetFrameReader {
         return candidates.compactMap(size).first
     }
 
+    private func currentPetDisplayBounds(in bounds: [String: Any]) -> CGRect? {
+        guard let display = bounds["displayBounds"] as? [String: Any],
+              let x = number(display["x"]), let y = number(display["y"]),
+              let width = number(display["width"]), let height = number(display["height"]),
+              x.isFinite, y.isFinite, width.isFinite, height.isFinite,
+              width > 0, height > 0 else { return nil }
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
     private func knownPetDisplayBounds(in bounds: [String: Any]) -> [CGRect] {
         var result: [CGRect] = []
 
@@ -3167,17 +3278,21 @@ final class PetFrameReader {
     private func liveCodexPetSurface(
         matching reference: CGRect,
         mascotReference: CGRect,
-        knownDisplayBounds: [CGRect]
+        knownDisplayBounds: [CGRect],
+        currentDisplayBounds: CGRect?,
+        activeDisplayBounds: [CGRect],
+        petVisible: Bool?,
+        avatarOverlayOpen: Bool?
     ) -> LiveCodexPetSurface? {
         let options = CGWindowListOption(arrayLiteral: .optionAll, .excludeDesktopElements)
-        guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        guard let windows = liveWindowInfoProvider?() ?? (CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]) else {
             return nil
         }
 
         // Per-window NSRunningApplication metadata can be incomplete in a
         // long-lived accessory app. Bind the exact pet-effect window name to
         // the already-identified official ChatGPT/Codex process instead.
-        let officialCodexPIDs = Set(
+        let officialCodexPIDs = officialCodexPIDsProvider?() ?? Set(
             NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex")
                 .map(\.processIdentifier)
         )
@@ -3207,7 +3322,12 @@ final class PetFrameReader {
                 mascotReference: mascotReference,
                 knownDisplayBounds: knownDisplayBounds,
                 isOnScreen: isOnScreen,
-                requiresAlignedDirectSurface: hasConfiguredPetSize
+                requiresAlignedDirectSurface: hasConfiguredPetSize,
+                currentDisplayBounds: currentDisplayBounds,
+                activeDisplayBounds: activeDisplayBounds,
+                configuredPetSize: currentConfiguredPetSize(),
+                petVisible: petVisible,
+                avatarOverlayOpen: avatarOverlayOpen
             ) else { return nil }
             return LiveCodexPetSurface(bounds: bounds, kind: kind)
         }
