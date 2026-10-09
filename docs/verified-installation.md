@@ -1,15 +1,15 @@
 # Verified Installation And Rollback
 
-This runbook installs the published Codex Pet Limit Rings v1.0.17 app without trusting an unverified download. It preserves an existing app, LaunchAgent, preferences, and local Skill in one timestamped backup before replacement.
+This runbook installs the published Codex Pet Limit Rings v1.0.18 app without trusting an unverified download. It preserves an existing app, LaunchAgent, preferences, and local Skill in one timestamped backup before replacement.
 
-Versions through v1.0.16 need this manual update once to gain release detection. Version 1.0.17 checks for releases and opens a validated release page on request; it does not download or install updates.
+Versions through v1.0.16 need this manual update once to gain release detection. From version 1.0.17, the app checks for releases and opens a validated release page on request; it does not download or install updates.
 
 ## Published Artifact
 
-- Release: [v1.0.17](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.17)
-- Release target: `0dd8c9e6ff69d8a7ea32188be6b04e366e069ac6`
-- ZIP SHA-256: `b1631c363510028524b9196c33213b2839c62d366dedea9b41d8c9744ff20f31`
-- Version/build: `1.0.17 / 26`
+- Release: [v1.0.18](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.18)
+- Release target: `234229a1ec8ef9e582abc99cc5b524cd6d790dc4`
+- ZIP SHA-256: `cd449e6c9f701a59ceccd0601cad606f7d2c850de1ea6d57b00d1199ae022e8b`
+- Version/build: `1.0.18 / 27`
 - Platform: Apple silicon `arm64`, macOS `15.0` or later
 - Signing: ad-hoc signed and not notarized
 
@@ -18,8 +18,8 @@ Versions through v1.0.16 need this manual update once to gain release detection.
 ```bash
 set -euo pipefail
 
-version=1.0.17
-expected_sha=b1631c363510028524b9196c33213b2839c62d366dedea9b41d8c9744ff20f31
+version=1.0.18
+expected_sha=cd449e6c9f701a59ceccd0601cad606f7d2c850de1ea6d57b00d1199ae022e8b
 release_dir="$HOME/Downloads/CodexPetLimitRings-v$version"
 base_url="https://github.com/Driedsandwich/codex-pet-limit-rings/releases/download/v$version"
 
@@ -42,7 +42,7 @@ The following procedure changes the installed app. Run it only after reviewing t
 ```bash
 set -euo pipefail
 
-version=1.0.17
+version=1.0.18
 release_dir="${release_dir:-$HOME/Downloads/CodexPetLimitRings-v$version}"
 backup_root="$HOME/Library/Application Support/CodexPetLimitRings/Backups"
 mkdir -p "$backup_root"
@@ -111,7 +111,7 @@ launchctl print "gui/$(id -u)/com.codex-pet.limit-rings" >/dev/null
 "$app/Contents/MacOS/CodexPetLimitRings" --diagnose
 ```
 
-Confirm version/build `1.0.17 / 26` and minimum macOS `15.0`. Confirm that the diagnostic remains privacy-safe, app-server is ready or has an explained bounded fallback, notifications have the expected state, and the rings are aligned to the live pet.
+Confirm version/build `1.0.18 / 27` and minimum macOS `15.0`. Confirm that the diagnostic remains privacy-safe, app-server is ready or has an explained bounded fallback, notifications have the expected state, and the rings are aligned to the live pet.
 
 In the app menu, use `Check for App Updates…` to check the public release metadata. Automatic checks are enabled by default and can be disabled with `Automatically Check for App Updates`. Diagnostics do not start release checks.
 

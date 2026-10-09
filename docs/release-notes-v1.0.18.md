@@ -18,6 +18,12 @@ No ChatGPT files, credentials, permissions, or settings are changed. No screen p
 
 ## Distribution
 
-Candidate version/build: `1.0.18 / 27`. Apple silicon `arm64`, macOS `15.0` or later. Ad-hoc signed and not notarized.
+Version/build: `1.0.18 / 27`. Apple silicon `arm64`, macOS `15.0` or later. Ad-hoc signed and not notarized.
 
-Regression tests, independent static review, and the full package gate passed. The installed bundle matches the verified package, with the previous installation preserved for rollback. Live diagnostics on ChatGPT 26.1007.21159 / CLI 0.162.0-alpha.17.2 reported a ready app-server, current usage data, and a readable pet frame. The operator confirmed rings at the correct pet-relative position. Publication and public-download verification are pending.
+Regression tests, independent static review, and the full package gate passed. The installed bundle matches the verified package, with the previous installation preserved for rollback. Live diagnostics on ChatGPT 26.1007.21159 / CLI 0.162.0-alpha.17.2 reported a ready app-server, current usage data, and a readable pet frame. The operator confirmed rings at the correct pet-relative position. The public ZIP was downloaded again and passed the fixed-SHA artifact smoke test.
+
+The [v1.0.18 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.18) was published at 2026-10-09 15:39:04 UTC (October 10 JST). Release target: `234229a1ec8ef9e582abc99cc5b524cd6d790dc4` (tree `bbcda93a14d929f437c40fdb4c8c0355609c98c6`). [PR #58](https://github.com/Driedsandwich/codex-pet-limit-rings/pull/58) is merged and [main CI](https://github.com/Driedsandwich/codex-pet-limit-rings/actions/runs/37952988268) passed on macOS 15 and 26.
+
+ZIP SHA-256: `cd449e6c9f701a59ceccd0601cad606f7d2c850de1ea6d57b00d1199ae022e8b`.
+
+Follow [Verified Installation And Rollback](verified-installation.md) to verify and install the ZIP. An older backup restores the previous app files but does not restore compatibility with the new full-display pet panel.
