@@ -29,19 +29,19 @@ When ChatGPT exits or the pet is closed, minimized, or moved off the active Spac
 
 ## Quick Start
 
-The published v1.0.17 app supports Apple silicon on macOS 15 and later. Its ZIP SHA-256 is:
+The published v1.0.18 app supports Apple silicon on macOS 15 and later. Its ZIP SHA-256 is:
 
 ```text
-b1631c363510028524b9196c33213b2839c62d366dedea9b41d8c9744ff20f31
+cd449e6c9f701a59ceccd0601cad606f7d2c850de1ea6d57b00d1199ae022e8b
 ```
 
-Download the ZIP and checksum from the [v1.0.17 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.17). The bundle is ad-hoc signed and not notarized, so verify the checksum and signature before approving a first launch.
+Download the ZIP and checksum from the [v1.0.18 release](https://github.com/Driedsandwich/codex-pet-limit-rings/releases/tag/v1.0.18). The bundle is ad-hoc signed and not notarized, so verify the checksum and signature before approving a first launch.
 
 For the complete download, checksum, backup, LaunchAgent, diagnostic, and rollback procedure, follow [Verified Installation And Rollback](docs/verified-installation.md).
 
-Version 1.0.17 adds release checks and update guidance while retaining v1.0.16's fix for ChatGPT 26.1002's changed native pet drawing panel. Earlier panel profiles and bundled CLI discovery remain supported; no new permission or Codex configuration change is required.
+Version 1.0.18 restores rings on ChatGPT 26.1007's display-sized pet panel when multiple displays are connected. It retains the release checks introduced in v1.0.17, earlier pet-panel profiles, and bundled CLI discovery. No new permission or Codex configuration change is required.
 
-The v1.0.18 source candidate also supports ChatGPT 26.1007's display-sized pet panel on multiple displays. It requires the current display and saved pet settings to agree; see the [compatibility notes](docs/release-notes-v1.0.18.md). The download above remains v1.0.17 until the new package is published.
+The new panel profile requires the current attached display and saved pet visibility, position, and size to agree. See the [compatibility notes and verification](docs/release-notes-v1.0.18.md).
 
 To build and install the current source with launch at login:
 
@@ -57,7 +57,7 @@ This fork preserves the original companion-app boundary and MIT license while ex
 
 | Area | Current contract |
 | --- | --- |
-| Pet surfaces | Official `com.openai.codex` process; legacy overlay, named mascot effect, bounded compact pet, centered oversized panel, or the separately verified ChatGPT 26.917 and 26.1002 asymmetric drawing panels |
+| Pet surfaces | Official `com.openai.codex` process; legacy overlay, named mascot effect, bounded compact pet, centered oversized panel, the separately verified ChatGPT 26.917 and 26.1002 asymmetric drawing panels, or the gated ChatGPT 26.1007 display-sized panel on multiple displays |
 | Placement | Live size and display tracking; bounded desktop pet-width setting and 192-by-208 canvas ratio; transparent drawing-panel bounds never become the interaction target |
 | Pet controls | Complete circular, mouse-through rings while preserving normal and contracted ChatGPT pet voice-control hit targets |
 | Limit updates | Long-lived experimental app-server connection, sparse live updates, 120-second full-snapshot watchdog, five-second read timeout, and bounded reconnect |
@@ -76,7 +76,7 @@ From v1.0.17, automatic release checks are enabled by default. The app checks th
 
 These checks send a fixed anonymous request to GitHub. They send no Codex account data, usage, credentials, machine identifier, or installed-version value. GitHub receives ordinary connection information such as the IP address. The dedicated session uses no cookies, credentials, or disk cache; only the automatic-check preference is saved. Failed checks remain distinguishable from a successful up-to-date result. Preview and diagnostic modes do not check for releases.
 
-Versions through v1.0.16 have no release checker. Existing users must manually install v1.0.17 once before future releases can be detected.
+Versions through v1.0.16 have no release checker. Existing users must manually install v1.0.17 or later once before future releases can be detected.
 
 The app uses a local stdio connection to the Codex app-server currently bundled with ChatGPT. OpenAI documents [`codex app-server`](https://learn.chatgpt.com/docs/developer-commands?surface=cli#cli-codex-app-server) as experimental and subject to change, so the following methods are a currently tested compatibility contract rather than a permanent API guarantee:
 
@@ -174,14 +174,14 @@ Build an ad-hoc-signed release ZIP and checksum under ignored `dist/`:
 tools/package-release.sh
 ```
 
-CI builds and verifies the current source, smoke-tests pinned v1.0.0 as the long-term provenance baseline, pinned v1.0.9 as the compatibility baseline, and the latest published v1.0.17 artifact. Only v1.0.0 receives its digest-bound pre-v1.0.4 local-path exception. Artifact execution uses synthetic account data; installed-app diagnostics separately verify the real CLI.
+CI builds and verifies the current source, smoke-tests pinned v1.0.0 as the long-term provenance baseline, pinned v1.0.9 as the compatibility baseline, and the latest published v1.0.18 artifact. Only v1.0.0 receives its digest-bound pre-v1.0.4 local-path exception. Artifact execution uses synthetic account data; installed-app diagnostics separately verify the real CLI.
 
 Inspect the latest published artifact without replacing the installed app:
 
 ```bash
 EXPECTED_MIN_OS=15.0 \
-EXPECTED_SHA256=b1631c363510028524b9196c33213b2839c62d366dedea9b41d8c9744ff20f31 \
-  tools/smoke-release-artifact.sh 1.0.17 --inspect-only
+EXPECTED_SHA256=cd449e6c9f701a59ceccd0601cad606f7d2c850de1ea6d57b00d1199ae022e8b \
+tools/smoke-release-artifact.sh 1.0.18 --inspect-only
 ```
 
 ## Give This Repository To Codex
@@ -221,7 +221,7 @@ experiments/weather-pets/            separate earlier weather-pet experiment
 - [CHANGELOG.md](CHANGELOG.md) records the complete release-by-release history.
 - [PUBLICATION_RECORD.md](PUBLICATION_RECORD.md) records publication provenance and release evidence.
 - [docs/downstream-scope.md](docs/downstream-scope.md) records the upstream baseline and downstream-only compatibility line.
-- [docs/release-notes-v1.0.17.md](docs/release-notes-v1.0.17.md) records the current release scope, artifact identity, and rollback target.
+- [docs/release-notes-v1.0.18.md](docs/release-notes-v1.0.18.md) records the current release scope, artifact identity, and rollback target.
 
 ## License
 
