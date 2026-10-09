@@ -2,6 +2,14 @@
 
 Notable changes to `codex-pet-limit-rings` are recorded here.
 
+## 1.0.18 - 2026-10-10
+
+### ChatGPT 26.1007 Multiple-Display Compatibility
+
+- Recognize the display-sized native pet panel used by current ChatGPT on Macs with multiple displays. Match the entire current display rectangle, the official on-screen process, and the existing pet visibility and size settings.
+- Place rings from the saved pet origin and bounded canvas size. Never use the display-sized panel as the ring center or mouse target, and retain the earlier pet-panel profiles.
+- Hide rings when the desktop pet visibility setting is false. Reject missing or stale display evidence and unrelated windows without requesting new permissions.
+
 ## 1.0.17 - 2026-10-08
 
 ### Release Checks And Update Guidance
